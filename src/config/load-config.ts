@@ -18,22 +18,25 @@ function mergedEnv(env: NodeJS.ProcessEnv | Record<string, string | undefined>) 
 }
 
 function parseStrictDotenv(source: string): Record<string, string> {
-  for (const [index, line] of source.split(/\r?\n/).entries()) {
-    const trimmed = line.trim();
-    if (trimmed === "" || trimmed.startsWith("#")) continue;
-
-    const assignment = trimmed.match(
-      /^(?:export\s+)?[A-Za-z_][A-Za-z0-9_]*\s*=\s*(.*)$/,
-    );
-    if (!assignment) throw new Error(`Invalid dotenv syntax at line ${index + 1}`);
-
-    const value = assignment[1];
-    const quote = value[0];
-    if ((quote === '"' || quote === "'") && value.at(-1) !== quote) {
-      throw new Error(`Invalid dotenv syntax at line ${index + 1}`);
-    }
+  const normalized = source.replace(/\r\n?/g, "\n");
+  const assignment =
+    /^\s*(?:export\s+)?[\w.-]+(?:\s*=\s*?|:\s+?)(?:\s*'(?:\\'|[^'])*'|\s*"(?:\\"|[^"])*"|\s*`(?:\\`|[^`])*`|[^#\r\n]+)?\s*(?:#.*)?$/gm;
+  let cursor = 0;
+  let match: RegExpExecArray | null;
+  while ((match = assignment.exec(normalized)) !== null) {
+    assertIgnorableDotenvGap(normalized.slice(cursor, match.index), normalized, cursor);
+    cursor = assignment.lastIndex;
   }
-  return parse(source);
+  assertIgnorableDotenvGap(normalized.slice(cursor), normalized, cursor);
+  return parse(normalized);
+}
+
+function assertIgnorableDotenvGap(gap: string, source: string, offset: number): void {
+  if (gap.split("\n").every((line) => line.trim() === "" || line.trim().startsWith("#"))) {
+    return;
+  }
+  const line = source.slice(0, offset).split("\n").length;
+  throw new Error(`Invalid dotenv syntax at line ${line}`);
 }
 
 export function loadMigrationConfig(

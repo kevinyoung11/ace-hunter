@@ -27,7 +27,10 @@ program.parseAsync(process.argv).catch((error: unknown) => {
 
   log(
     "error",
-    commanderErrorOutput.trim() || (error instanceof Error ? error.message : String(error)),
+    error instanceof CommanderError
+      ? `CLI argument error: ${error.code}`
+      : commanderErrorOutput.trim() ||
+          (error instanceof Error ? error.message : String(error)),
     loadRedactionRegistry(process.env),
   );
   process.exitCode = 1;

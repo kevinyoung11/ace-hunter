@@ -80,4 +80,26 @@ describe("loadConfig", () => {
       rmSync(directory, { recursive: true });
     }
   });
+
+  it("accepts quoted dotenv values with inline comments", () => {
+    const directory = mkdtempSync(join(tmpdir(), "ace-hunter-config-"));
+    const envPath = join(directory, "runtime.env");
+    writeFileSync(
+      envPath,
+      [
+        `ACE_HUNTER_RUNTIME_DATABASE_URL="${valid.ACE_HUNTER_RUNTIME_DATABASE_URL}" # database`,
+        'ACE_HUNTER_GITHUB_TOKEN="file-token" # token',
+        `ACE_HUNTER_USER_ID='${valid.ACE_HUNTER_USER_ID}' # user`,
+      ].join("\n"),
+      { mode: 0o600 },
+    );
+    try {
+      expect(loadRuntimeConfig({ ACE_HUNTER_ENV_FILE: envPath })).toMatchObject({
+        runtimeDatabaseUrl: valid.ACE_HUNTER_RUNTIME_DATABASE_URL,
+        githubToken: "file-token",
+      });
+    } finally {
+      rmSync(directory, { recursive: true });
+    }
+  });
 });

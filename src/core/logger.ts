@@ -3,7 +3,7 @@ export function redact(message: string, loadedSecrets: readonly string[] = []): 
     .replace(/(postgres(?:ql)?:\/\/[^:]+:)[^@]+@/gi, "$1[REDACTED]@")
     .replace(/(Authorization:\s*)(?:Bearer\s+)?\S+/gi, "$1[REDACTED]")
     .replace(
-      /((?:Set-)?Cookie:\s*)[^\r\n]*?(?=\s+(?:(?:Set-)?Cookie|Authorization):|\s+https?:\/\/|$)/gi,
+      /((?:Set-)?Cookie:\s*)[^\r\n]*/gi,
       "$1[REDACTED]",
     )
     .replace(
