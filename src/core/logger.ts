@@ -2,7 +2,10 @@ export function redact(message: string, loadedSecrets: readonly string[] = []): 
   const structural = message
     .replace(/(postgres(?:ql)?:\/\/[^:]+:)[^@]+@/gi, "$1[REDACTED]@")
     .replace(/(Authorization:\s*)(?:Bearer\s+)?\S+/gi, "$1[REDACTED]")
-    .replace(/((?:Set-)?Cookie:\s*)\S+/gi, "$1[REDACTED]")
+    .replace(
+      /((?:Set-)?Cookie:\s*)[^\r\n]*?(?=\s+(?:(?:Set-)?Cookie|Authorization):|\s+https?:\/\/|$)/gi,
+      "$1[REDACTED]",
+    )
     .replace(
       /([?&](?:api[_-]?key|access[_-]?token|token|key)=)[^&\s]+/gi,
       "$1[REDACTED]",
@@ -15,7 +18,7 @@ export function redact(message: string, loadedSecrets: readonly string[] = []): 
 }
 
 export function log(
-  level: "info" | "warn" | "error",
+  level: "debug" | "info" | "warn" | "error",
   message: string,
   loadedSecrets: readonly string[] = [],
 ): void {

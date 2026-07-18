@@ -9,9 +9,31 @@ import {
 
 function mergedEnv(env: NodeJS.ProcessEnv | Record<string, string | undefined>) {
   const fileEnv = env.ACE_HUNTER_ENV_FILE
-    ? parse(readFileSync(env.ACE_HUNTER_ENV_FILE, "utf8"))
+    ? parseStrictDotenv(readFileSync(env.ACE_HUNTER_ENV_FILE, "utf8"))
     : {};
-  return { ...fileEnv, ...env };
+  const definedEnv = Object.fromEntries(
+    Object.entries(env).filter((entry): entry is [string, string] => entry[1] !== undefined),
+  );
+  return { ...fileEnv, ...definedEnv };
+}
+
+function parseStrictDotenv(source: string): Record<string, string> {
+  for (const [index, line] of source.split(/\r?\n/).entries()) {
+    const trimmed = line.trim();
+    if (trimmed === "" || trimmed.startsWith("#")) continue;
+
+    const assignment = trimmed.match(
+      /^(?:export\s+)?[A-Za-z_][A-Za-z0-9_]*\s*=\s*(.*)$/,
+    );
+    if (!assignment) throw new Error(`Invalid dotenv syntax at line ${index + 1}`);
+
+    const value = assignment[1];
+    const quote = value[0];
+    if ((quote === '"' || quote === "'") && value.at(-1) !== quote) {
+      throw new Error(`Invalid dotenv syntax at line ${index + 1}`);
+    }
+  }
+  return parse(source);
 }
 
 export function loadMigrationConfig(

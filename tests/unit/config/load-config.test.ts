@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { loadMigrationConfig, loadRuntimeConfig } from "../../../src/config/load-config.js";
 
@@ -34,5 +37,47 @@ describe("loadConfig", () => {
       loadRuntimeConfig({ ...valid, ACE_HUNTER_RUNTIME_DATABASE_URL: undefined }),
     ).not.toThrow(/github-secret/);
     expect(() => loadMigrationConfig(valid)).not.toThrow();
+  });
+
+  it("loads a strict dotenv file while defined process values take precedence", () => {
+    const directory = mkdtempSync(join(tmpdir(), "ace-hunter-config-"));
+    const envPath = join(directory, "runtime.env");
+    writeFileSync(
+      envPath,
+      [
+        `ACE_HUNTER_RUNTIME_DATABASE_URL=${valid.ACE_HUNTER_RUNTIME_DATABASE_URL}`,
+        "ACE_HUNTER_GITHUB_TOKEN=file-token",
+        `ACE_HUNTER_USER_ID=${valid.ACE_HUNTER_USER_ID}`,
+      ].join("\n"),
+      { mode: 0o600 },
+    );
+
+    try {
+      expect(
+        loadRuntimeConfig({
+          ACE_HUNTER_ENV_FILE: envPath,
+          ACE_HUNTER_RUNTIME_DATABASE_URL: undefined,
+          ACE_HUNTER_GITHUB_TOKEN: "process-token",
+        }),
+      ).toMatchObject({
+        runtimeDatabaseUrl: valid.ACE_HUNTER_RUNTIME_DATABASE_URL,
+        githubToken: "process-token",
+      });
+    } finally {
+      rmSync(directory, { recursive: true });
+    }
+  });
+
+  it("rejects malformed dotenv syntax instead of silently ignoring it", () => {
+    const directory = mkdtempSync(join(tmpdir(), "ace-hunter-config-"));
+    const envPath = join(directory, "runtime.env");
+    writeFileSync(envPath, "THIS IS NOT DOTENV\n", { mode: 0o600 });
+    try {
+      expect(() => loadRuntimeConfig({ ACE_HUNTER_ENV_FILE: envPath })).toThrow(
+        /Invalid dotenv syntax/,
+      );
+    } finally {
+      rmSync(directory, { recursive: true });
+    }
   });
 });

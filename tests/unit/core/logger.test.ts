@@ -11,3 +11,18 @@ it("redacts URL passwords and authorization values", () => {
     "postgres://ace:[REDACTED]@db/x Authorization: [REDACTED] Cookie: [REDACTED] Set-Cookie: [REDACTED] https://x.test?q=ok&api_key=[REDACTED] [REDACTED]",
   );
 });
+
+it("redacts the complete cookie header including spaced attributes", () => {
+  expect(
+    redact("Cookie: session=one; auth=two Set-Cookie: sid=three; HttpOnly"),
+  ).toBe("Cookie: [REDACTED] Set-Cookie: [REDACTED]");
+});
+
+it("redacts every value in cookie headers without crossing line boundaries", () => {
+  expect(redact("Cookie: session=secret; csrf=also-secret; theme=dark")).toBe(
+    "Cookie: [REDACTED]",
+  );
+  expect(
+    redact("Cookie: session=secret; csrf=also-secret\r\nSet-Cookie: sid=value; HttpOnly"),
+  ).toBe("Cookie: [REDACTED]\r\nSet-Cookie: [REDACTED]");
+});
