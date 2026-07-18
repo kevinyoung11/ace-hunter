@@ -382,8 +382,11 @@ function classifyFailure(
   ) {
     return { code: "unexpected_job_error", retryable: false, summary: "unexpected_job_error" };
   }
-  const boundedRawMessage = error.safeMessage.slice(0, 2_048);
-  const message = cleanText(redact(boundedRawMessage, loadedSecrets), 512);
+  const rawMessageWithinBounds = error.safeMessage.length <= 2_048 &&
+    Buffer.byteLength(error.safeMessage, "utf8") <= 2_048;
+  const message = rawMessageWithinBounds
+    ? cleanText(redact(error.safeMessage, loadedSecrets), 512)
+    : "";
   return {
     code: error.code,
     retryable: error.retryable && !neverRetryCodes.has(error.code),

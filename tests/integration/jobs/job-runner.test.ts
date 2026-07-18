@@ -493,6 +493,34 @@ describe("JobRunner", () => {
     expect(rejected?.stack).not.toContain(secret);
   });
 
+  it("drops oversized safe messages before truncation or redaction", async () => {
+    const privateKey = `-----BEGIN PRIVATE KEY-----${"A".repeat(3_000)}-----END PRIVATE KEY-----`;
+    const longPostgresUrl = `postgres://ace:${"recognizable-password-prefix-".repeat(120)}@localhost/db`;
+    for (const [suffix, message, loadedSecrets] of [
+      ["pem", privateKey, [privateKey]],
+      ["postgres", longPostgresUrl, []],
+      ["unicode", "雪".repeat(1_000), []],
+    ] as const) {
+      let rejected: Error | undefined;
+      try {
+        await runner({ loadedSecrets }).run(
+          { ...baseInput, parameters: { oversizedMessage: suffix } },
+          async () => { throw new JobError("timeout", false, message); },
+        );
+      } catch (error) {
+        rejected = error as Error;
+      }
+      expect(rejected?.message).toBe("job failed (timeout)");
+      expect(rejected?.stack).not.toContain(message.slice(0, 64));
+    }
+    const summaries = (await runtimePool.query(
+      "select error_summary from ace_hunter.job_runs order by created_at",
+    )).rows.map((row) => row.error_summary);
+    expect(summaries).toEqual(["timeout", "timeout", "timeout"]);
+    expect(JSON.stringify(summaries)).not.toContain(privateKey.slice(0, 512));
+    expect(JSON.stringify(summaries)).not.toContain(longPostgresUrl.slice(0, 512));
+  });
+
   it("rejects a lock pool aimed at a different database target", async () => {
     const otherTarget = new Pool({ connectionString: config.runtimeDatabaseUrl.replace(
       "/ace_hunter_test",
