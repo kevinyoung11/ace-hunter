@@ -110,6 +110,95 @@ export async function assertCatalogIsAbsentOrComplete(
     throw new Error("catalog preflight failed: missing schema or wrong owner");
   }
 
+  const routines = await client.query<{ entry: string }>(
+    `select routine.proname||'('||pg_get_function_identity_arguments(routine.oid)||')|'||
+            pg_get_userbyid(routine.proowner)||'|'||language.lanname||'|'||
+            routine.prokind||'|'||routine.prosecdef||'|'||routine.provolatile||'|'||
+            routine.proleakproof||'|'||routine.proparallel||'|'||
+            coalesce((
+              select string_agg(
+                coalesce(grantee.rolname,'PUBLIC')||':'||acl.privilege_type||':'||
+                acl.is_grantable,',' order by coalesce(grantee.rolname,'PUBLIC'),
+                acl.privilege_type
+              )
+                from aclexplode(coalesce(
+                  routine.proacl,acldefault('f',routine.proowner)
+                )) acl
+                left join pg_roles grantee on grantee.oid=acl.grantee
+            ),'<none>')||'|'||
+            encode(sha256(convert_to(pg_get_functiondef(routine.oid),'UTF8')),'hex') entry
+       from pg_proc routine
+       join pg_namespace namespace_object on namespace_object.oid=routine.pronamespace
+       join pg_language language on language.oid=routine.prolang
+      where namespace_object.nspname='ace_hunter'
+      order by routine.proname,pg_get_function_identity_arguments(routine.oid)`,
+  );
+  if (routines.rows.length !== 0) {
+    throw new Error("catalog preflight failed: routines manifest mismatch");
+  }
+
+  const customTypes = await client.query<{ entry: string }>(
+    `select type_object.typname||'|'||pg_get_userbyid(type_object.typowner)||'|'||
+            type_object.typtype||'|'||type_object.typcategory||'|'||
+            type_object.typnotnull||'|'||
+            coalesce(format_type(type_object.typbasetype,type_object.typtypmod),'<none>')||'|'||
+            coalesce(type_object.typdefault,'<none>')||'|'||
+            coalesce(collation_namespace.nspname||'.'||collation_object.collname,'<none>')||'|'||
+            coalesce((
+              select string_agg(
+                coalesce(grantee.rolname,'PUBLIC')||':'||acl.privilege_type||':'||
+                acl.is_grantable,',' order by coalesce(grantee.rolname,'PUBLIC'),
+                acl.privilege_type
+              )
+                from aclexplode(type_object.typacl) acl
+                left join pg_roles grantee on grantee.oid=acl.grantee
+            ),'<none>') entry
+       from pg_type type_object
+       join pg_namespace namespace_object on namespace_object.oid=type_object.typnamespace
+       left join pg_class related_relation on related_relation.oid=type_object.typrelid
+       left join pg_collation collation_object on collation_object.oid=type_object.typcollation
+       left join pg_namespace collation_namespace
+         on collation_namespace.oid=collation_object.collnamespace
+      where namespace_object.nspname='ace_hunter' and (
+        type_object.typtype in ('d','e','r','m') or
+        (type_object.typtype='c' and related_relation.relkind='c') or
+        (type_object.typtype='b' and type_object.typrelid=0 and type_object.typelem=0)
+      )
+      order by type_object.typname`,
+  );
+  if (customTypes.rows.length !== 0) {
+    throw new Error("catalog preflight failed: custom types manifest mismatch");
+  }
+
+  const userTriggers = await client.query<{ entry: string }>(
+    `select table_object.relname||'|'||trigger_object.tgname||'|'||
+            trigger_object.tgenabled||'|'||trigger_object.tgtype||'|'||
+            pg_get_triggerdef(trigger_object.oid,false) entry
+       from pg_trigger trigger_object
+       join pg_class table_object on table_object.oid=trigger_object.tgrelid
+       join pg_namespace namespace_object on namespace_object.oid=table_object.relnamespace
+      where namespace_object.nspname='ace_hunter' and not trigger_object.tgisinternal
+      order by table_object.relname,trigger_object.tgname`,
+  );
+  if (userTriggers.rows.length !== 0) {
+    throw new Error("catalog preflight failed: triggers manifest mismatch");
+  }
+
+  const userRules = await client.query<{ entry: string }>(
+    `select table_object.relname||'|'||rule_object.rulename||'|'||
+            rule_object.ev_type||'|'||rule_object.ev_enabled||'|'||
+            rule_object.is_instead||'|'||
+            encode(sha256(convert_to(pg_get_ruledef(rule_object.oid,false),'UTF8')),'hex') entry
+       from pg_rewrite rule_object
+       join pg_class table_object on table_object.oid=rule_object.ev_class
+       join pg_namespace namespace_object on namespace_object.oid=table_object.relnamespace
+      where namespace_object.nspname='ace_hunter' and rule_object.rulename<>'_RETURN'
+      order by table_object.relname,rule_object.rulename`,
+  );
+  if (userRules.rows.length !== 0) {
+    throw new Error("catalog preflight failed: rules manifest mismatch");
+  }
+
   const relations = await client.query<{
     relname: string;
     relkind: string;
@@ -302,26 +391,23 @@ export async function assertCatalogIsAbsentOrComplete(
   const externalAceGrants = await client.query<{ count: number }>(
     `select (
        (select count(*) from pg_namespace namespace_object
-          cross join lateral aclexplode(coalesce(
-            namespace_object.nspacl,acldefault('n',namespace_object.nspowner)
-          )) acl
-          join pg_roles grantee on grantee.oid=acl.grantee
-         where grantee.rolname in (
-           'ace_hunter_owner','ace_hunter_migrator','ace_hunter_runtime'
-         ) and namespace_object.nspname<>'ace_hunter'
+          cross join lateral aclexplode(namespace_object.nspacl) acl
+          left join pg_roles grantee on grantee.oid=acl.grantee
+          left join pg_roles grantor on grantor.oid=acl.grantor
+         where namespace_object.nspname<>'ace_hunter'
+           and (grantee.rolname like 'ace_hunter_%' or grantor.rolname like 'ace_hunter_%')
            and not (
              namespace_object.nspname='auth' and
-             grantee.rolname='ace_hunter_owner' and acl.privilege_type='USAGE'
+             grantee.rolname='ace_hunter_owner' and acl.privilege_type='USAGE' and
+             grantor.rolname not like 'ace_hunter_%'
            )) +
        (select count(*) from pg_class table_object
           join pg_namespace namespace_object on namespace_object.oid=table_object.relnamespace
-          cross join lateral aclexplode(coalesce(
-            table_object.relacl,acldefault('r',table_object.relowner)
-          )) acl
-          join pg_roles grantee on grantee.oid=acl.grantee
-         where grantee.rolname in (
-           'ace_hunter_owner','ace_hunter_migrator','ace_hunter_runtime'
-         ) and namespace_object.nspname<>'ace_hunter'
+          cross join lateral aclexplode(table_object.relacl) acl
+          left join pg_roles grantee on grantee.oid=acl.grantee
+          left join pg_roles grantor on grantor.oid=acl.grantor
+         where namespace_object.nspname<>'ace_hunter'
+           and (grantee.rolname like 'ace_hunter_%' or grantor.rolname like 'ace_hunter_%')
            and namespace_object.nspname!~'^pg_'
            and namespace_object.nspname<>'information_schema'
            and table_object.relkind in ('r','p','v','m','f','S')) +
@@ -329,15 +415,15 @@ export async function assertCatalogIsAbsentOrComplete(
           join pg_class table_object on table_object.oid=column_object.attrelid
           join pg_namespace namespace_object on namespace_object.oid=table_object.relnamespace
           cross join lateral aclexplode(column_object.attacl) acl
-          join pg_roles grantee on grantee.oid=acl.grantee
+          left join pg_roles grantee on grantee.oid=acl.grantee
+          left join pg_roles grantor on grantor.oid=acl.grantor
          where column_object.attnum>0 and not column_object.attisdropped
-           and grantee.rolname in (
-             'ace_hunter_owner','ace_hunter_migrator','ace_hunter_runtime'
-           ) and namespace_object.nspname<>'ace_hunter'
+           and namespace_object.nspname<>'ace_hunter'
+           and (grantee.rolname like 'ace_hunter_%' or grantor.rolname like 'ace_hunter_%')
            and not (
              namespace_object.nspname='auth' and table_object.relname='users' and
              column_object.attname='id' and grantee.rolname='ace_hunter_owner' and
-             acl.privilege_type='REFERENCES'
+             acl.privilege_type='REFERENCES' and grantor.rolname not like 'ace_hunter_%'
            )) +
        (select count(*) from pg_namespace namespace_object
           join pg_roles owner_role on owner_role.oid=namespace_object.nspowner

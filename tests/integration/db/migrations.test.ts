@@ -244,7 +244,7 @@ describe("complete schema", () => {
     });
   });
 
-  it("bootstrap removes historical Ace and Ace-granted Public ACL outside its schema", async () => {
+  it("bootstrap refuses external schema, table, and column ACLs without modifying them", async () => {
     await adminPool.query("drop schema if exists ace_hunter_test_history cascade");
     try {
       await adminPool.query(
@@ -265,17 +265,10 @@ describe("complete schema", () => {
          grant update(id) on ace_hunter_test_history.fixture to public;
          reset role`,
       );
-      await execFileAsync("psql", [
-        testDatabaseConfig.adminDatabaseUrl,
-        "-X",
-        "-v",
-        "ON_ERROR_STOP=1",
-        "-f",
-        "tests/helpers/bootstrap-test-db.sql",
-      ]);
-      await expect(
-        migrate(migratorPool, { expectedChecksum: migrationChecksum }),
-      ).resolves.toBeUndefined();
+      await expect(execFileAsync("psql", [
+        testDatabaseConfig.adminDatabaseUrl, "-X", "-v", "ON_ERROR_STOP=1",
+        "-f", "ops/01_bootstrap_roles.sql",
+      ])).rejects.toThrow(/external Ace ownership or ACL audit failed/);
       const residual = await adminPool.query<{ count: number }>(
         `select (
            (select count(*) from pg_namespace namespace_object
@@ -301,7 +294,7 @@ describe("complete schema", () => {
                and (grantee.rolname like 'ace_hunter_%' or grantor.rolname like 'ace_hunter_%'))
          )::int count`,
       );
-      expect(residual.rows[0]?.count).toBe(0);
+      expect(residual.rows[0]?.count).toBe(6);
       const unrelatedPublic = await adminPool.query<{ count: number }>(
         `select (
            (select count(*) from pg_namespace namespace_object
@@ -330,6 +323,30 @@ describe("complete schema", () => {
       expect(unrelatedPublic.rows[0]?.count).toBe(3);
     } finally {
       await adminPool.query("drop schema if exists ace_hunter_test_history cascade");
+    }
+  });
+
+  it("bootstrap refuses a current-database Ace ACL without modifying it", async () => {
+    try {
+      await adminPool.query(
+        "grant connect on database ace_hunter_test to ace_hunter_runtime",
+      );
+      await expect(execFileAsync("psql", [
+        testDatabaseConfig.adminDatabaseUrl, "-X", "-v", "ON_ERROR_STOP=1",
+        "-f", "ops/01_bootstrap_roles.sql",
+      ])).rejects.toThrow(/external Ace ownership or ACL audit failed/);
+      const direct = await adminPool.query<{ count: number }>(
+        `select count(*)::int count from pg_database d
+          cross join lateral aclexplode(d.datacl) acl
+          join pg_roles grantee on grantee.oid=acl.grantee
+         where d.datname=current_database() and grantee.rolname='ace_hunter_runtime'
+           and acl.privilege_type='CONNECT'`,
+      );
+      expect(direct.rows[0]?.count).toBe(1);
+    } finally {
+      await adminPool.query(
+        "revoke connect on database ace_hunter_test from ace_hunter_runtime",
+      );
     }
   });
 
@@ -382,7 +399,7 @@ describe("complete schema", () => {
           testDatabaseConfig.adminDatabaseUrl,
           "-X", "-v", "ON_ERROR_STOP=1", "-f", "ops/01_bootstrap_roles.sql",
         ]),
-      ).rejects.toThrow(/external Ace-owned high-risk object/);
+      ).rejects.toThrow(/external Ace ownership or ACL audit failed/);
       const objects = await adminPool.query<{ count: number }>(
         `select (
            (select count(*) from pg_proc p join pg_namespace n on n.oid=p.pronamespace
@@ -425,12 +442,15 @@ describe("complete schema", () => {
         preActivationClient.release();
       }
 
-      await execFileAsync("psql", [
-        testDatabaseConfig.adminDatabaseUrl,
-        "-X", "-v", "ON_ERROR_STOP=1",
-        "-v", "ace_hunter_runtime_password=test-runtime",
-        "-f", "ops/02_activate_runtime_role.sql",
-      ]);
+      expect(readFileSync("ops/02_activate_runtime_role.sql", "utf8")).toContain(
+        "\\password ace_hunter_runtime",
+      );
+      expect(readFileSync("ops/02_activate_runtime_role.sql", "utf8")).not.toContain(
+        "ace_hunter_runtime_password",
+      );
+      await adminPool.query(
+        "alter role ace_hunter_runtime login password 'test-runtime'",
+      );
       const activatedClient = await migratorPool.connect();
       try {
         await expect(assertRuntimeActivationInvariant(activatedClient)).resolves.toBeUndefined();
@@ -639,6 +659,54 @@ describe("destructive migration guards", () => {
       migrate(migratorPool, { expectedChecksum: migrationChecksum }),
     ).rejects.toThrow(/catalog preflight/);
     expect(await tableNames()).toEqual(["products"]);
+  });
+
+  it("rejects an otherwise empty schema containing a custom type", async () => {
+    await adminPool.query("create type ace_hunter.evil_empty as enum ('x')");
+    await expect(
+      migrate(migratorPool, { expectedChecksum: migrationChecksum }),
+    ).rejects.toThrow(/custom types/);
+    expect(await tableNames()).toEqual([]);
+  });
+
+  it("rejects an unexpected SECURITY DEFINER routine", async () => {
+    await migrate(migratorPool, { expectedChecksum: migrationChecksum });
+    await adminPool.query(
+      `create function ace_hunter.evil() returns integer language sql
+         security definer volatile as 'select 1'`,
+    );
+    await expect(
+      migrate(migratorPool, { expectedChecksum: migrationChecksum }),
+    ).rejects.toThrow(/routines/);
+  });
+
+  it("rejects a user trigger", async () => {
+    await migrate(migratorPool, { expectedChecksum: migrationChecksum });
+    try {
+      await adminPool.query(
+        `create function public.ace_hunter_test_trigger() returns trigger
+           language plpgsql as 'begin return new; end';
+         create trigger evil before insert on ace_hunter.products
+           for each row execute function public.ace_hunter_test_trigger()`,
+      );
+      await expect(
+        migrate(migratorPool, { expectedChecksum: migrationChecksum }),
+      ).rejects.toThrow(/triggers/);
+    } finally {
+      await adminPool.query(
+        "drop function if exists public.ace_hunter_test_trigger() cascade",
+      );
+    }
+  });
+
+  it("rejects a user rule", async () => {
+    await migrate(migratorPool, { expectedChecksum: migrationChecksum });
+    await adminPool.query(
+      "create rule evil as on update to ace_hunter.products do nothing",
+    );
+    await expect(
+      migrate(migratorPool, { expectedChecksum: migrationChecksum }),
+    ).rejects.toThrow(/rules/);
   });
 
   it("rolls back every DDL statement when one statement fails", async () => {
