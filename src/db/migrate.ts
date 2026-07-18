@@ -29,6 +29,10 @@ export async function migrate(pool: Pool, options: MigrationOptions): Promise<vo
     if (state === "empty") {
       try {
         await client.query(sql);
+        const completedState = await assertCatalogIsAbsentOrComplete(client);
+        if (completedState !== "complete") {
+          throw new Error("catalog preflight failed: migration did not complete");
+        }
       } catch (error) {
         await client.query("rollback").catch(() => undefined);
         throw error;

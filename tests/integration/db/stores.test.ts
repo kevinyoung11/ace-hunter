@@ -1,4 +1,4 @@
-import { afterAll, beforeEach, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, expect, it } from "vitest";
 import { Pool } from "pg";
 import { AnalysisOutputStore } from "../../../src/db/stores/analysis-output-store.js";
 import { JobRunStore } from "../../../src/db/stores/job-run-store.js";
@@ -8,9 +8,24 @@ import { RepositoryStore } from "../../../src/db/stores/repository-store.js";
 import { SnapshotStore } from "../../../src/db/stores/snapshot-store.js";
 import { TrendingStore } from "../../../src/db/stores/trending-store.js";
 import { XPostStore } from "../../../src/db/stores/x-post-store.js";
+import {
+  createVerifiedTestPools,
+  parseTestDatabaseConfig,
+} from "../../helpers/test-database.js";
 
-const adminPool = new Pool({ connectionString: process.env.ACE_TEST_ADMIN_DATABASE_URL });
-const runtimePool = new Pool({ connectionString: process.env.ACE_TEST_RUNTIME_DATABASE_URL });
+const testDatabaseConfig = parseTestDatabaseConfig(process.env);
+
+let adminPool: Pool;
+let migratorPool: Pool;
+let runtimePool: Pool;
+
+beforeAll(async () => {
+  ({ adminPool, migratorPool, runtimePool } = await createVerifiedTestPools({
+    ACE_TEST_ADMIN_DATABASE_URL: testDatabaseConfig.adminDatabaseUrl,
+    ACE_TEST_MIGRATION_DATABASE_URL: testDatabaseConfig.migrationDatabaseUrl,
+    ACE_TEST_RUNTIME_DATABASE_URL: testDatabaseConfig.runtimeDatabaseUrl,
+  }));
+});
 
 beforeEach(async () => {
   await adminPool.query(
@@ -23,7 +38,7 @@ beforeEach(async () => {
 });
 
 afterAll(async () => {
-  await Promise.all([adminPool.end(), runtimePool.end()]);
+  await Promise.all([adminPool.end(), migratorPool.end(), runtimePool.end()]);
 });
 
 const repositoryInput = {
@@ -220,4 +235,52 @@ it("persists each approved aggregate through parameterized stores", async () => 
     analyses: 1,
     jobs: 1,
   });
+});
+
+it("atomically reconciles and retries a same-batch trending rank swap", async () => {
+  const repositories = new RepositoryStore(runtimePool);
+  const trending = new TrendingStore(runtimePool);
+  const firstRepositoryId = await repositories.upsert(repositoryInput);
+  const secondRepositoryId = await repositories.upsert({
+    ...repositoryInput,
+    githubRepoId: 102,
+    githubNodeId: "R_102",
+    name: "hunter-two",
+    fullName: "ace/hunter-two",
+    repoUrl: "https://github.com/ace/hunter-two",
+  });
+  const batch = (swapped: boolean) => [
+    {
+      repositoryId: firstRepositoryId,
+      period: "daily" as const,
+      capturedAt: new Date("2026-07-19T00:00:00Z"),
+      rank: swapped ? 2 : 1,
+      starsInPeriod: 50,
+      sourceUrl: "https://github.com/trending",
+      collectionStatus: "success" as const,
+    },
+    {
+      repositoryId: secondRepositoryId,
+      period: "daily" as const,
+      capturedAt: new Date("2026-07-19T00:00:00Z"),
+      rank: swapped ? 1 : 2,
+      starsInPeriod: 40,
+      sourceUrl: "https://github.com/trending",
+      collectionStatus: "success" as const,
+    },
+  ];
+
+  await trending.replaceBatch(batch(false));
+  await trending.replaceBatch(batch(true));
+  await trending.replaceBatch(batch(true));
+
+  const rows = await runtimePool.query(
+    `select repository_id,rank from ace_hunter.github_trending_snapshots
+      where period='daily' and language='all' and captured_at='2026-07-19T00:00:00Z'
+      order by rank`,
+  );
+  expect(rows.rows).toEqual([
+    { repository_id: secondRepositoryId, rank: 1 },
+    { repository_id: firstRepositoryId, rank: 2 },
+  ]);
 });
