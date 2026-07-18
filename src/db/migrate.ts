@@ -28,11 +28,14 @@ export async function migrate(pool: Pool, options: MigrationOptions): Promise<vo
     const state = await assertCatalogIsAbsentOrComplete(client);
     if (state === "empty") {
       try {
+        await client.query("begin");
+        await client.query("set local role ace_hunter_owner");
         await client.query(sql);
         const completedState = await assertCatalogIsAbsentOrComplete(client);
         if (completedState !== "complete") {
           throw new Error("catalog preflight failed: migration did not complete");
         }
+        await client.query("commit");
       } catch (error) {
         await client.query("rollback").catch(() => undefined);
         throw error;

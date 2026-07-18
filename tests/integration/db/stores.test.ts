@@ -127,6 +127,7 @@ it("persists each approved aggregate through parameterized stores", async () => 
   const products = new ProductStore(runtimePool);
   const jobs = new JobRunStore(runtimePool);
   const trending = new TrendingStore(runtimePool);
+  expect("insert" in trending).toBe(false);
   const posts = new XPostStore(runtimePool);
   const monitors = new MonitorStore(runtimePool);
   const analyses = new AnalysisOutputStore(runtimePool);
@@ -154,7 +155,7 @@ it("persists each approved aggregate through parameterized stores", async () => 
     startedAt: new Date("2026-07-19T00:00:00Z"),
     idempotencyKey: "job-1",
   });
-  await trending.insert({
+  await trending.replaceBatch([{
     repositoryId,
     period: "daily",
     capturedAt: new Date("2026-07-19T00:00:00Z"),
@@ -163,7 +164,7 @@ it("persists each approved aggregate through parameterized stores", async () => 
     sourceUrl: "https://github.com/trending",
     collectionStatus: "success",
     jobRunId,
-  });
+  }]);
   await posts.upsert({
     productId,
     repositoryId,

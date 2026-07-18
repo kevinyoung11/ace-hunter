@@ -1,6 +1,3 @@
-begin;
-set local role ace_hunter_owner;
-
 create table ace_hunter.products (
   id uuid constraint products_pkey primary key default gen_random_uuid(),
   name text not null,
@@ -326,5 +323,3 @@ $$;
 alter schema ace_hunter owner to ace_hunter_owner;
 revoke all on schema ace_hunter from public;
 grant usage on schema ace_hunter to ace_hunter_runtime;
-
-commit;

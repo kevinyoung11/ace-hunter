@@ -72,10 +72,11 @@ const expectedConstraints = [
 ] as const;
 
 const expectedFingerprints = {
-  columns: { count: 172, sha256: "aec1b4c7c4a0ec7b1165ad2fba5c2f7006585e51b93bdd85b14ba7d565cd3054" },
+  columns: { count: 172, sha256: "439882e91e377d32b119a9d72f1a675702f23226d4b03b6f078a4d36b9e7d669" },
   indexes: { count: 21, sha256: "93dfd140a884d66ff84e949706426de9a46e58bc7dda87da6990f823246bdcd3" },
   checks: { count: 30, sha256: "6e91c757967f330a97a7e02a343fd4a850237a1a9c5f42573b0bee11b98e8371" },
-  foreignKeys: { count: 14, sha256: "5105194ebf1695c6298b3fcf5385eafc6cc3efa2e0240fe7290d5195b45e1be7" },
+  foreignKeys: { count: 14, sha256: "99b1cbe3610ec64a5804b97d8143453041424a4ce33b5e0fc3c0af4ca36c066b" },
+  constraints: { count: 55, sha256: "1a80ec06fb10a1d71053beb4dcfec424b1a3d7518d6e75e9f086dbfa497af697" },
   policies: { count: 9, sha256: "e6b84227f45078470630416e64cc3f7c0421600239a5e234588910143cbded89" },
   schemaAcl: { count: 3, sha256: "272e6f88097149d73e5b0a7de8190926445431de93d0828051fc8265ebd2b280" },
   tableAcl: { count: 99, sha256: "d2d3c8e945f73aceba1b001b6aec98a2f79e83ac0a2a0ecc20934fef3962f676" },
@@ -92,7 +93,10 @@ function assertFingerprint(
   const expected = expectedFingerprints[domain];
   const actualHash = createHash("sha256").update(JSON.stringify(entries)).digest("hex");
   if (entries.length !== expected.count || actualHash !== expected.sha256) {
-    throw new Error(`catalog preflight failed: ${domain} manifest mismatch`);
+    throw new Error(
+      `catalog preflight failed: ${domain} manifest mismatch ` +
+        `(count=${entries.length}, sha256=${actualHash})`,
+    );
   }
 }
 
@@ -106,8 +110,13 @@ export async function assertCatalogIsAbsentOrComplete(
     throw new Error("catalog preflight failed: missing schema or wrong owner");
   }
 
-  const relations = await client.query<{ relname: string; relkind: string; owner: string }>(
-    `select c.relname,c.relkind,pg_get_userbyid(c.relowner) owner
+  const relations = await client.query<{
+    relname: string;
+    relkind: string;
+    relpersistence: string;
+    owner: string;
+  }>(
+    `select c.relname,c.relkind,c.relpersistence,pg_get_userbyid(c.relowner) owner
        from pg_class c join pg_namespace n on n.oid=c.relnamespace
       where n.nspname='ace_hunter' and c.relkind in ('r','v','m','S','f','p') order by 1`,
   );
@@ -120,15 +129,23 @@ export async function assertCatalogIsAbsentOrComplete(
       tables.map((row) => row.relname),
       businessTables,
     ) ||
-    tables.some((row) => row.owner !== "ace_hunter_owner")
+    tables.some(
+      (row) => row.owner !== "ace_hunter_owner" || row.relpersistence !== "p",
+    )
   ) {
     throw new Error("catalog preflight failed: table manifest mismatch");
   }
 
   const columns = await client.query<{ entry: string }>(
     `select table_object.relname||'|'||column_object.attnum||'|'||
-            column_object.attname||'|'||type_namespace.nspname||'.'||
-            type_object.typname||'|'||
+            column_object.attname||'|'||format_type(
+              column_object.atttypid,column_object.atttypmod
+            )||'|'||
+            coalesce(
+              collation_namespace.nspname||'.'||collation_object.collname,'<none>'
+            )||'|'||
+            coalesce(nullif(column_object.attidentity,''),'<none>')||'|'||
+            coalesce(nullif(column_object.attgenerated,''),'<none>')||'|'||
             case when column_object.attnotnull then 'NO' else 'YES' end||'|'||
             coalesce(
               pg_get_expr(column_default.adbin,column_default.adrelid,false),'<null>'
@@ -138,6 +155,10 @@ export async function assertCatalogIsAbsentOrComplete(
        join pg_namespace table_namespace on table_namespace.oid=table_object.relnamespace
        join pg_type type_object on type_object.oid=column_object.atttypid
        join pg_namespace type_namespace on type_namespace.oid=type_object.typnamespace
+       left join pg_collation collation_object
+         on collation_object.oid=column_object.attcollation
+       left join pg_namespace collation_namespace
+         on collation_namespace.oid=collation_object.collnamespace
        left join pg_attrdef column_default
          on column_default.adrelid=table_object.oid
         and column_default.adnum=column_object.attnum
@@ -167,7 +188,8 @@ export async function assertCatalogIsAbsentOrComplete(
             string_agg(source_column.attname,',' order by local_key.ord)||'|'||
             target_namespace.nspname||'.'||target.relname||'|'||
             string_agg(target_column.attname,',' order by local_key.ord)||'|'||
-            c.confdeltype entry
+            c.confdeltype||'|'||c.confupdtype||'|'||c.confmatchtype||'|'||
+            c.condeferrable||'|'||c.condeferred||'|'||c.convalidated entry
        from pg_constraint c
        join pg_class src on src.oid=c.conrelid
        join pg_namespace source_namespace on source_namespace.oid=src.relnamespace
@@ -180,7 +202,9 @@ export async function assertCatalogIsAbsentOrComplete(
          on target_column.attrelid=target.oid
         and target_column.attnum=c.confkey[local_key.ord]
       where source_namespace.nspname='ace_hunter' and c.contype='f'
-      group by c.conname,src.relname,target_namespace.nspname,target.relname,c.confdeltype
+      group by c.conname,src.relname,target_namespace.nspname,target.relname,
+               c.confdeltype,c.confupdtype,c.confmatchtype,c.condeferrable,
+               c.condeferred,c.convalidated
       order by c.conname`,
   );
   const constraints = await client.query<{
@@ -189,6 +213,15 @@ export async function assertCatalogIsAbsentOrComplete(
     confdeltype: string | null;
   }>(
     `select c.conname,c.contype,case when c.contype='f' then c.confdeltype::text end confdeltype
+       from pg_constraint c join pg_namespace n on n.oid=c.connamespace
+      where n.nspname='ace_hunter' order by c.conname`,
+  );
+  const constraintManifest = await client.query<{ entry: string }>(
+    `select c.conname||'|'||c.contype||'|'||
+            case when c.contype='f' then c.confupdtype::text else '<na>' end||'|'||
+            case when c.contype='f' then c.confdeltype::text else '<na>' end||'|'||
+            case when c.contype='f' then c.confmatchtype::text else '<na>' end||'|'||
+            c.condeferrable||'|'||c.condeferred||'|'||c.convalidated entry
        from pg_constraint c join pg_namespace n on n.oid=c.connamespace
       where n.nspname='ace_hunter' order by c.conname`,
   );
@@ -337,7 +370,49 @@ export async function assertCatalogIsAbsentOrComplete(
           cross join lateral aclexplode(column_object.attacl) acl
           join pg_roles grantor on grantor.oid=acl.grantor
          where namespace_object.nspname<>'ace_hunter' and acl.grantee=0
-           and grantor.rolname like 'ace_hunter_%')
+           and grantor.rolname like 'ace_hunter_%') +
+       (select count(*) from pg_proc routine
+          join pg_namespace namespace_object on namespace_object.oid=routine.pronamespace
+          join pg_roles owner_role on owner_role.oid=routine.proowner
+         where namespace_object.nspname<>'ace_hunter'
+           and namespace_object.nspname!~'^pg_'
+           and namespace_object.nspname<>'information_schema'
+           and owner_role.rolname like 'ace_hunter_%') +
+       (select count(*) from pg_proc routine
+          join pg_namespace namespace_object on namespace_object.oid=routine.pronamespace
+          cross join lateral aclexplode(routine.proacl) acl
+          left join pg_roles grantee on grantee.oid=acl.grantee
+          left join pg_roles grantor on grantor.oid=acl.grantor
+         where namespace_object.nspname<>'ace_hunter'
+           and namespace_object.nspname!~'^pg_'
+           and namespace_object.nspname<>'information_schema'
+           and (grantee.rolname like 'ace_hunter_%' or grantor.rolname like 'ace_hunter_%')) +
+       (select count(*) from pg_type type_object
+          join pg_namespace namespace_object on namespace_object.oid=type_object.typnamespace
+          join pg_roles owner_role on owner_role.oid=type_object.typowner
+         where namespace_object.nspname<>'ace_hunter'
+           and namespace_object.nspname!~'^pg_'
+           and namespace_object.nspname<>'information_schema'
+           and owner_role.rolname like 'ace_hunter_%') +
+       (select count(*) from pg_type type_object
+          join pg_namespace namespace_object on namespace_object.oid=type_object.typnamespace
+          cross join lateral aclexplode(type_object.typacl) acl
+          left join pg_roles grantee on grantee.oid=acl.grantee
+          left join pg_roles grantor on grantor.oid=acl.grantor
+         where namespace_object.nspname<>'ace_hunter'
+           and namespace_object.nspname!~'^pg_'
+           and namespace_object.nspname<>'information_schema'
+           and (grantee.rolname like 'ace_hunter_%' or grantor.rolname like 'ace_hunter_%')) +
+       (select count(*) from pg_database database_object
+          join pg_roles owner_role on owner_role.oid=database_object.datdba
+         where database_object.datname=current_database()
+           and owner_role.rolname like 'ace_hunter_%') +
+       (select count(*) from pg_database database_object
+          cross join lateral aclexplode(database_object.datacl) acl
+          left join pg_roles grantee on grantee.oid=acl.grantee
+          left join pg_roles grantor on grantor.oid=acl.grantor
+         where database_object.datname=current_database()
+           and (grantee.rolname like 'ace_hunter_%' or grantor.rolname like 'ace_hunter_%'))
      )::int count`,
   );
   const authAceAcl = await client.query<{ entry: string }>(
@@ -409,9 +484,22 @@ export async function assertCatalogIsAbsentOrComplete(
   const expectedRoleCapabilities = [
     { rolname: "ace_hunter_migrator", rolcanlogin: true, rolsuper: false, rolcreatedb: false, rolcreaterole: false, rolinherit: false, rolreplication: false, rolbypassrls: false },
     { rolname: "ace_hunter_owner", rolcanlogin: false, rolsuper: false, rolcreatedb: false, rolcreaterole: false, rolinherit: false, rolreplication: false, rolbypassrls: false },
-    { rolname: "ace_hunter_runtime", rolcanlogin: true, rolsuper: false, rolcreatedb: false, rolcreaterole: false, rolinherit: false, rolreplication: false, rolbypassrls: false },
   ];
-  if (JSON.stringify(roleCapabilities.rows) !== JSON.stringify(expectedRoleCapabilities)) {
+  const runtimeCapabilities = roleCapabilities.rows.find(
+    (row) => row.rolname === "ace_hunter_runtime",
+  );
+  if (
+    roleCapabilities.rows.length !== 3 ||
+    JSON.stringify(roleCapabilities.rows.slice(0, 2)) !==
+      JSON.stringify(expectedRoleCapabilities) ||
+    !runtimeCapabilities ||
+    runtimeCapabilities.rolsuper ||
+    runtimeCapabilities.rolcreatedb ||
+    runtimeCapabilities.rolcreaterole ||
+    runtimeCapabilities.rolinherit ||
+    runtimeCapabilities.rolreplication ||
+    runtimeCapabilities.rolbypassrls
+  ) {
     throw new Error("catalog preflight failed: role capabilities mismatch");
   }
   if (
@@ -424,8 +512,24 @@ export async function assertCatalogIsAbsentOrComplete(
   assertFingerprint("indexes", indexes.rows.map((row) => row.entry));
   assertFingerprint("checks", checks.rows.map((row) => row.entry));
   assertFingerprint("foreignKeys", foreignKeys.rows.map((row) => row.entry));
+  assertFingerprint("constraints", constraintManifest.rows.map((row) => row.entry));
   assertFingerprint("policies", policies.rows.map((row) => row.entry));
   assertFingerprint("schemaAcl", schemaAcl.rows.map((row) => row.entry));
   assertFingerprint("tableAcl", tableAcl.rows.map((row) => row.entry));
   return "complete";
+}
+
+export async function assertRuntimeActivationInvariant(
+  client: PoolClient,
+): Promise<void> {
+  const state = await assertCatalogIsAbsentOrComplete(client);
+  if (state !== "complete") {
+    throw new Error("runtime activation invariant failed: catalog is not complete");
+  }
+  const runtime = await client.query<{ rolcanlogin: boolean }>(
+    "select rolcanlogin from pg_roles where rolname='ace_hunter_runtime'",
+  );
+  if (runtime.rows[0]?.rolcanlogin !== true) {
+    throw new Error("runtime activation invariant failed: runtime role is not LOGIN");
+  }
 }

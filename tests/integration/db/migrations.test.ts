@@ -5,7 +5,10 @@ import { promisify } from "node:util";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { Pool } from "pg";
 import { migrate } from "../../../src/db/migrate.js";
-import { assertCatalogIsAbsentOrComplete } from "../../../src/db/schema-manifest.js";
+import {
+  assertCatalogIsAbsentOrComplete,
+  assertRuntimeActivationInvariant,
+} from "../../../src/db/schema-manifest.js";
 import {
   createVerifiedTestPools,
   parseTestDatabaseConfig,
@@ -360,6 +363,88 @@ describe("complete schema", () => {
     }
   });
 
+  it("bootstrap refuses external Ace-owned high-risk objects without modifying them", async () => {
+    await adminPool.query("drop schema if exists ace_hunter_boundary cascade");
+    try {
+      await adminPool.query(
+        `create schema ace_hunter_boundary;
+         create function ace_hunter_boundary.fixture() returns integer
+           language sql as 'select 1';
+         alter function ace_hunter_boundary.fixture() owner to ace_hunter_owner;
+         create type ace_hunter_boundary.fixture_type as (value integer);
+         alter type ace_hunter_boundary.fixture_type owner to ace_hunter_owner;
+         create sequence ace_hunter_boundary.fixture_sequence;
+         grant usage on sequence ace_hunter_boundary.fixture_sequence
+           to ace_hunter_runtime`,
+      );
+      await expect(
+        execFileAsync("psql", [
+          testDatabaseConfig.adminDatabaseUrl,
+          "-X", "-v", "ON_ERROR_STOP=1", "-f", "ops/01_bootstrap_roles.sql",
+        ]),
+      ).rejects.toThrow(/external Ace-owned high-risk object/);
+      const objects = await adminPool.query<{ count: number }>(
+        `select (
+           (select count(*) from pg_proc p join pg_namespace n on n.oid=p.pronamespace
+             where n.nspname='ace_hunter_boundary' and p.proname='fixture') +
+           (select count(*) from pg_type t join pg_namespace n on n.oid=t.typnamespace
+             where n.nspname='ace_hunter_boundary' and t.typname='fixture_type') +
+           (select count(*) from pg_class c join pg_namespace n on n.oid=c.relnamespace
+             where n.nspname='ace_hunter_boundary' and c.relname='fixture_sequence')
+         )::int count`,
+      );
+      expect(objects.rows[0]?.count).toBe(3);
+    } finally {
+      await adminPool.query("drop schema if exists ace_hunter_boundary cascade");
+    }
+  });
+
+  it("supports the real bootstrap, migrate, then runtime activation sequence", async () => {
+    try {
+      await adminPool.query("alter role ace_hunter_runtime nologin");
+      await emptyOwnerSchema();
+      await execFileAsync("psql", [
+        testDatabaseConfig.adminDatabaseUrl,
+        "-X", "-v", "ON_ERROR_STOP=1", "-f", "ops/01_bootstrap_roles.sql",
+      ]);
+      expect(
+        (await adminPool.query(
+          "select rolcanlogin from pg_roles where rolname='ace_hunter_runtime'",
+        )).rows[0]?.rolcanlogin,
+      ).toBe(false);
+
+      await expect(
+        migrate(migratorPool, { expectedChecksum: migrationChecksum }),
+      ).resolves.toBeUndefined();
+      const preActivationClient = await migratorPool.connect();
+      try {
+        await expect(assertRuntimeActivationInvariant(preActivationClient)).rejects.toThrow(
+          /activation/i,
+        );
+      } finally {
+        preActivationClient.release();
+      }
+
+      await execFileAsync("psql", [
+        testDatabaseConfig.adminDatabaseUrl,
+        "-X", "-v", "ON_ERROR_STOP=1",
+        "-v", "ace_hunter_runtime_password=test-runtime",
+        "-f", "ops/02_activate_runtime_role.sql",
+      ]);
+      const activatedClient = await migratorPool.connect();
+      try {
+        await expect(assertRuntimeActivationInvariant(activatedClient)).resolves.toBeUndefined();
+      } finally {
+        activatedClient.release();
+      }
+    } finally {
+      await execFileAsync("psql", [
+        testDatabaseConfig.adminDatabaseUrl,
+        "-X", "-v", "ON_ERROR_STOP=1", "-f", "tests/helpers/bootstrap-test-db.sql",
+      ]);
+    }
+  });
+
   it("rejects invalid statuses, counts, scores, relationships, and time ordering", async () => {
     const rejectCheck = async (sql: string, values: unknown[] = []) => {
       await expect(runtimePool.query(sql, values)).rejects.toMatchObject({ code: "23514" });
@@ -558,7 +643,7 @@ describe("destructive migration guards", () => {
 
   it("rolls back every DDL statement when one statement fails", async () => {
     const faultySql =
-      "begin; set local role ace_hunter_owner; create table ace_hunter.partial(id int); select missing_function(); commit;";
+      "create table ace_hunter.partial(id int); select missing_function();";
     const checksum = createHash("sha256").update(faultySql).digest("hex");
     await expect(
       migrate(migratorPool, { expectedChecksum: checksum, sqlOverride: faultySql }),
@@ -566,14 +651,51 @@ describe("destructive migration guards", () => {
     expect(await tableNames()).toEqual([]);
   });
 
-  it("rejects a successfully committed migration that does not match the manifest", async () => {
+  it("rejects an incomplete migration and rolls its DDL back", async () => {
     const incompleteSql =
-      "begin; set local role ace_hunter_owner; create table ace_hunter.partial(id int); commit;";
+      "create table ace_hunter.partial(id int);";
     const checksum = createHash("sha256").update(incompleteSql).digest("hex");
     await expect(
       migrate(migratorPool, { expectedChecksum: checksum, sqlOverride: incompleteSql }),
     ).rejects.toThrow(/catalog preflight/);
-    expect(await tableNames()).toEqual(["partial"]);
+    expect(await tableNames()).toEqual([]);
+    const catalogClient = await migratorPool.connect();
+    try {
+      expect(await assertCatalogIsAbsentOrComplete(catalogClient)).toBe("empty");
+    } finally {
+      catalogClient.release();
+    }
+  });
+
+  it("rejects numeric typmod drift", async () => {
+    await migrate(migratorPool, { expectedChecksum: migrationChecksum });
+    await adminPool.query(
+      "alter table ace_hunter.product_repositories alter column confidence type numeric(4,3)",
+    );
+    await expect(
+      migrate(migratorPool, { expectedChecksum: migrationChecksum }),
+    ).rejects.toThrow(/catalog preflight/);
+  });
+
+  it("rejects table persistence drift", async () => {
+    await migrate(migratorPool, { expectedChecksum: migrationChecksum });
+    await adminPool.query("alter table ace_hunter.product_x_posts set unlogged");
+    await expect(
+      migrate(migratorPool, { expectedChecksum: migrationChecksum }),
+    ).rejects.toThrow(/catalog preflight/);
+  });
+
+  it("rejects foreign-key deferrability drift", async () => {
+    await migrate(migratorPool, { expectedChecksum: migrationChecksum });
+    await adminPool.query(
+      `alter table ace_hunter.product_repositories
+         drop constraint product_repositories_product_id_fkey,
+         add constraint product_repositories_product_id_fkey foreign key(product_id)
+           references ace_hunter.products(id) on delete cascade deferrable initially deferred`,
+    );
+    await expect(
+      migrate(migratorPool, { expectedChecksum: migrationChecksum }),
+    ).rejects.toThrow(/catalog preflight/);
   });
 
   it("rejects a wrong checksum before catalog or DDL changes", async () => {

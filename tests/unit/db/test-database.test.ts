@@ -33,6 +33,15 @@ it("requires three explicit same-host URLs for exactly ace_hunter_test", () => {
         "postgres://ace_hunter_runtime:test@elsewhere/ace_hunter_test",
     }),
   ).toThrow(/same host/);
+  expect(() =>
+    parseTestDatabaseConfig({
+      ACE_TEST_ADMIN_DATABASE_URL: "postgres://admin@db.example/ace_hunter_test",
+      ACE_TEST_MIGRATION_DATABASE_URL:
+        "postgres://ace_hunter_migrator:test@db.example/ace_hunter_test",
+      ACE_TEST_RUNTIME_DATABASE_URL:
+        "postgres://ace_hunter_runtime:test@db.example/ace_hunter_test",
+    }),
+  ).toThrow(/loopback/);
 });
 
 it("does not create any Pool before configuration validation", async () => {

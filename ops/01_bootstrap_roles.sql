@@ -59,6 +59,51 @@ begin
 end
 $$;
 
+do $ace_boundary_validate$
+begin
+  if exists (
+    select 1 from pg_class o join pg_namespace n on n.oid=o.relnamespace
+      join pg_roles owner_role on owner_role.oid=o.relowner
+     where n.nspname<>'ace_hunter' and o.relkind='S'
+       and owner_role.rolname like 'ace_hunter_%'
+    union all
+    select 1 from pg_class o join pg_namespace n on n.oid=o.relnamespace
+      cross join lateral aclexplode(o.relacl) acl
+      left join pg_roles grantee on grantee.oid=acl.grantee
+      left join pg_roles grantor on grantor.oid=acl.grantor
+     where n.nspname<>'ace_hunter' and o.relkind='S'
+       and (grantee.rolname like 'ace_hunter_%' or grantor.rolname like 'ace_hunter_%')
+    union all
+    select 1 from pg_proc o join pg_namespace n on n.oid=o.pronamespace
+      join pg_roles owner_role on owner_role.oid=o.proowner
+     where n.nspname<>'ace_hunter' and owner_role.rolname like 'ace_hunter_%'
+    union all
+    select 1 from pg_type o join pg_namespace n on n.oid=o.typnamespace
+      join pg_roles owner_role on owner_role.oid=o.typowner
+     where n.nspname<>'ace_hunter' and owner_role.rolname like 'ace_hunter_%'
+    union all
+    select 1 from pg_database o join pg_roles owner_role on owner_role.oid=o.datdba
+     where o.datname=current_database() and owner_role.rolname like 'ace_hunter_%'
+    union all
+    select 1 from pg_proc o join pg_namespace n on n.oid=o.pronamespace
+      cross join lateral aclexplode(o.proacl) acl
+      left join pg_roles grantee on grantee.oid=acl.grantee
+      left join pg_roles grantor on grantor.oid=acl.grantor
+     where n.nspname<>'ace_hunter'
+       and (grantee.rolname like 'ace_hunter_%' or grantor.rolname like 'ace_hunter_%')
+    union all
+    select 1 from pg_type o join pg_namespace n on n.oid=o.typnamespace
+      cross join lateral aclexplode(o.typacl) acl
+      left join pg_roles grantee on grantee.oid=acl.grantee
+      left join pg_roles grantor on grantor.oid=acl.grantor
+     where n.nspname<>'ace_hunter'
+       and (grantee.rolname like 'ace_hunter_%' or grantor.rolname like 'ace_hunter_%')
+  ) then
+    raise exception 'Ace Hunter bootstrap refused: external Ace-owned high-risk object requires manual cleanup';
+  end if;
+end
+$ace_boundary_validate$;
+
 do $ace_acl_cleanup$
 declare
   grant_row record;
