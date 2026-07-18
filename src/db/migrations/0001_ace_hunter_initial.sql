@@ -124,6 +124,7 @@ create table ace_hunter.job_runs (
   failed_items jsonb not null default '[]'::jsonb,
   error_summary text,
   attempt integer not null default 0,
+  next_attempt_at timestamptz,
   idempotency_key text not null,
   created_at timestamptz not null default now(),
   constraint job_runs_parent_run_id_fkey foreign key (parent_run_id)
@@ -133,6 +134,12 @@ create table ace_hunter.job_runs (
     attempt between 0 and 2 and coalesce(items_expected,0)>=0 and
     coalesce(items_succeeded,0)>=0 and coalesce(items_failed,0)>=0 and
     coalesce(items_skipped,0)>=0
+  ),
+  constraint job_runs_retry_check check (
+    next_attempt_at is null or (
+      status='failed' and completed_at is not null and
+      next_attempt_at>=completed_at and attempt<2
+    )
   )
 );
 

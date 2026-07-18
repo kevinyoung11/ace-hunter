@@ -200,6 +200,7 @@ describe("complete schema", () => {
         "analysis_outputs_time_check",
         "analysis_outputs_trigger_check",
         "job_runs_counts_check",
+        "job_runs_retry_check",
         "job_runs_status_check",
         "job_runs_time_check",
         "job_runs_trigger_check",
@@ -704,6 +705,12 @@ describe("complete schema", () => {
       await rejectJob({ [column]: -1 });
     }
     await rejectJob({ completed_at: new Date("2026-07-18T00:00:00Z") });
+    await rejectJob({ next_attempt_at: new Date("2026-07-19T00:05:00Z") });
+    await rejectJob({
+      status: "failed",
+      completed_at: new Date("2026-07-19T00:00:00Z"),
+      next_attempt_at: new Date("2026-07-18T23:59:00Z"),
+    });
   });
 });
 

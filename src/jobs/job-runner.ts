@@ -7,8 +7,13 @@ import {
   JobRunStore,
   type JobRunRecord,
   type JobRunStatus,
+  type TerminalJobRunStatus,
 } from "../db/stores/job-run-store.js";
-import { canonicalJobParameters, jobIdempotencyKey, retryDelayMs } from "./retry-policy.js";
+import {
+  canonicalJobParameters,
+  jobIdempotencyKeyFromCanonical,
+  retryDelayMs,
+} from "./retry-policy.js";
 
 export type JobTriggerType = "schedule" | "manual" | "realtime" | "user";
 
@@ -54,15 +59,19 @@ export class JobError extends Error {
 }
 
 export interface JobRunnerOptions {
+  lockPool: Pool;
+  loadedSecrets: readonly string[];
   clock?: Clock;
-  loadedSecrets?: readonly string[];
+  duplicateDeadlineMs?: number;
+  duplicatePollMs?: number;
 }
 
+const postgresIntMax = 2_147_483_647;
 const resultSchema = z.object({
-  expected: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
-  succeeded: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
-  failed: z.array(z.object({ id: z.string(), code: z.string() })).max(1_000),
-  skipped: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  expected: z.number().int().nonnegative().max(postgresIntMax),
+  succeeded: z.number().int().nonnegative().max(postgresIntMax),
+  failed: z.array(z.object({ id: z.string().max(512), code: z.string().max(128) })).max(1_000),
+  skipped: z.number().int().nonnegative().max(postgresIntMax),
 }).strict();
 
 const allowedJobErrorCodes = new Set([
@@ -82,7 +91,7 @@ const allowedItemErrorCodes = new Set([
   "duplicate",
   "item_failed",
 ]);
-const sensitiveKey = /(?:authorization|cookie|password|passwd|secret|token|api[_-]?key|credential)/i;
+const sensitiveKey = /(?:authorization|cookie|password|passwd|secret|token|api[_-]?key|credential|database[_-]?url|dsn|private[_-]?key|session|connection[_-]?string)/i;
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 class InvalidJobResultError extends Error {}
@@ -94,10 +103,19 @@ class InvalidJobResultError extends Error {}
 export class JobRunner {
   private readonly clock: Clock;
   private readonly loadedSecrets: readonly string[];
+  private readonly lockPool: Pool;
+  private readonly duplicateDeadlineMs: number;
+  private readonly duplicatePollMs: number;
 
-  public constructor(private readonly pool: Pool, options: JobRunnerOptions = {}) {
+  public constructor(private readonly pool: Pool, options: JobRunnerOptions) {
+    if (!options || options.lockPool === pool || !Array.isArray(options.loadedSecrets)) {
+      throw new Error("invalid_job_runner_options");
+    }
+    this.lockPool = options.lockPool;
     this.clock = options.clock ?? systemClock;
-    this.loadedSecrets = options.loadedSecrets ?? [];
+    this.loadedSecrets = [...options.loadedSecrets];
+    this.duplicateDeadlineMs = options.duplicateDeadlineMs ?? 1_000;
+    this.duplicatePollMs = options.duplicatePollMs ?? 5;
   }
 
   public async run(
@@ -105,8 +123,17 @@ export class JobRunner {
     handler: (context: JobContext) => Promise<JobResult>,
   ): Promise<JobRunOutcome> {
     const validated = validateInput(input, this.loadedSecrets);
-    const key = jobIdempotencyKey(validated.name, validated.scheduledFor, validated.parameters);
-    const client = await this.pool.connect();
+    const key = jobIdempotencyKeyFromCanonical(
+      validated.name,
+      validated.scheduledFor,
+      validated.parametersJson,
+    );
+    let client: PoolClient;
+    try {
+      client = await this.lockPool.connect();
+    } catch {
+      throw new Error("job runner unavailable");
+    }
     let lockHeld = false;
     let destroyConnection = false;
     try {
@@ -115,7 +142,7 @@ export class JobRunner {
         [key],
       );
       lockHeld = lock.rows[0]?.acquired === true;
-      if (!lockHeld) return await this.liveDuplicateOutcome(key);
+      if (!lockHeld) return await this.liveDuplicateOutcome(client, key);
 
       const store = new JobRunStore(client);
       const claim = await store.claim({
@@ -128,13 +155,35 @@ export class JobRunner {
         startedAt: this.validNow(),
         idempotencyKey: key,
       });
-      if (!claim.inserted && claim.run.status !== "running") {
-        return outcome(claim.run, false);
+      if (!claim.inserted) {
+        if (claim.run.status === "failed" && claim.run.nextAttemptAt && claim.run.attempt < 2) {
+          const remaining = Math.max(0, claim.run.nextAttemptAt.getTime() - this.validNow().getTime());
+          if (remaining > 0) await this.safeSleep(remaining);
+          const resumed = await store.prepareRetry({
+            id: claim.run.id,
+            attempt: claim.run.attempt,
+            startedAt: this.validNow(),
+          });
+          return await this.executeAttempts(store, resumed, validated, handler);
+        }
+        if (claim.run.status !== "running") return outcome(claim.run, false);
+        if (claim.run.attempt >= 2) {
+          return outcome(await store.exhaustOrphan({
+            id: claim.run.id,
+            completedAt: this.validNow(),
+          }), false);
+        }
+        const resumed = await store.consumeOrphan({
+          id: claim.run.id,
+          attempt: claim.run.attempt,
+          startedAt: this.validNow(),
+        });
+        return await this.executeAttempts(store, resumed, validated, handler);
       }
       return await this.executeAttempts(store, claim.run, validated, handler);
     } catch (error) {
       if (isConnectionError(error)) destroyConnection = true;
-      throw error;
+      throw sanitizeRunnerError(error);
     } finally {
       if (lockHeld) {
         try {
@@ -174,7 +223,7 @@ export class JobRunner {
           ...(input.dataCutoffAt ? { dataCutoffAt: new Date(input.dataCutoffAt) } : {}),
         });
         const result = validateResult(rawResult, this.loadedSecrets);
-        const status: JobRunStatus = result.failed.length === 0
+        const status: TerminalJobRunStatus = result.failed.length === 0
           ? "success"
           : result.succeeded > 0
             ? "partial"
@@ -192,30 +241,42 @@ export class JobRunner {
         return { runId: initial.id, executed: true, status, attempt };
       } catch (error) {
         const failure = classifyFailure(error, this.loadedSecrets);
+        const nextAttempt = attempt + 1;
+        const delay = failure.retryable ? retryDelayMs(nextAttempt) : null;
+        const completedAt = this.validNow();
         await store.markFailed({
           id: initial.id,
           attempt,
-          completedAt: this.validNow(),
+          completedAt,
           errorSummary: failure.summary,
+          nextAttemptAt: delay === null ? null : new Date(completedAt.getTime() + delay),
         });
-        const nextAttempt = attempt + 1;
-        const delay = failure.retryable ? retryDelayMs(nextAttempt) : null;
         if (delay === null) throw new Error(`job failed (${failure.code})`);
-        await this.clock.sleep(delay);
+        await this.safeSleep(delay);
         await store.prepareRetry({ id: initial.id, attempt, startedAt: this.validNow() });
         attempt = nextAttempt;
       }
     }
   }
 
-  private async liveDuplicateOutcome(key: string): Promise<JobRunOutcome> {
-    const store = new JobRunStore(this.pool);
-    for (let index = 0; index < 200; index += 1) {
+  private async liveDuplicateOutcome(client: PoolClient, key: string): Promise<JobRunOutcome> {
+    const store = new JobRunStore(client);
+    const deadline = this.validNow().getTime() + this.duplicateDeadlineMs;
+    for (let index = 0; index < 1_000; index += 1) {
       const existing = await store.readByKey(key);
       if (existing) return outcome(existing, false);
-      await new Promise<void>((resolve) => setTimeout(resolve, 1));
+      if (this.validNow().getTime() >= deadline) break;
+      await this.clock.sleep(this.duplicatePollMs);
     }
     throw new Error("job duplicate claim unavailable");
+  }
+
+  private async safeSleep(milliseconds: number): Promise<void> {
+    try {
+      await this.clock.sleep(milliseconds);
+    } catch {
+      throw new Error("job retry interrupted");
+    }
   }
 
   private validNow(): Date {
@@ -240,10 +301,14 @@ function validateInput(input: JobInput, loadedSecrets: readonly string[]): Valid
     requireDate(input.scheduledFor);
     if (input.dataCutoffAt) requireDate(input.dataCutoffAt);
     if (input.parentRunId && !uuid.test(input.parentRunId)) throw new Error("parent run id");
-    rejectSensitiveKeys(input.parameters);
     const parametersJson = canonicalJobParameters(input.parameters);
-    if (redact(parametersJson, loadedSecrets) !== parametersJson) throw new Error("secret value");
-    return { ...input, parametersJson };
+    rejectSensitiveValues(input.parameters, loadedSecrets);
+    return {
+      ...input,
+      scheduledFor: new Date(input.scheduledFor),
+      ...(input.dataCutoffAt ? { dataCutoffAt: new Date(input.dataCutoffAt) } : {}),
+      parametersJson,
+    };
   } catch {
     throw new Error("invalid_job_input");
   }
@@ -253,15 +318,19 @@ function requireDate(value: Date): void {
   if (!(value instanceof Date) || !Number.isFinite(value.getTime())) throw new Error("date");
 }
 
-function rejectSensitiveKeys(value: unknown): void {
+function rejectSensitiveValues(value: unknown, loadedSecrets: readonly string[]): void {
   if (typeof value === "string") {
-    if (value.length > 2_048 || hasControlCharacters(value)) {
+    if (
+      value.length > 2_048 || hasControlCharacters(value) ||
+      loadedSecrets.some((secret) => secret.length > 0 && value.includes(secret)) ||
+      redact(value, loadedSecrets) !== value
+    ) {
       throw new Error("unsafe parameter string");
     }
     return;
   }
   if (Array.isArray(value)) {
-    for (const child of value) rejectSensitiveKeys(child);
+    for (const child of value) rejectSensitiveValues(child, loadedSecrets);
     return;
   }
   if (value && typeof value === "object") {
@@ -270,7 +339,7 @@ function rejectSensitiveKeys(value: unknown): void {
         throw new Error("unsafe parameter key");
       }
       if (sensitiveKey.test(key)) throw new Error("sensitive parameter key");
-      rejectSensitiveKeys(child);
+      rejectSensitiveValues(child, loadedSecrets);
     }
   }
 }
@@ -282,11 +351,12 @@ function validateResult(value: unknown, loadedSecrets: readonly string[]): JobRe
   const seen = new Set<string>();
   for (const item of parsed.data.failed) {
     const id = cleanText(redact(item.id, loadedSecrets), 128);
-    if (!id || seen.has(id)) continue;
+    if (!id || seen.has(id)) throw new InvalidJobResultError();
     seen.add(id);
     failed.push({ id, code: allowedItemErrorCodes.has(item.code) ? item.code : "item_failed" });
   }
-  if (parsed.data.expected !== parsed.data.succeeded + failed.length + parsed.data.skipped) {
+  const accounted = parsed.data.succeeded + failed.length + parsed.data.skipped;
+  if (!Number.isSafeInteger(accounted) || accounted > postgresIntMax || parsed.data.expected !== accounted) {
     throw new InvalidJobResultError();
   }
   return { ...parsed.data, failed };
@@ -344,4 +414,14 @@ function releaseClient(client: PoolClient, destroy: boolean): void {
   } catch {
     // A failed release has already made this connection unusable.
   }
+}
+
+function sanitizeRunnerError(error: unknown): Error {
+  if (error instanceof Error && (
+    /^job failed \([a-z_]+\)$/.test(error.message) ||
+    error.message === "job_run_claim_mismatch" ||
+    error.message === "job duplicate claim unavailable" ||
+    error.message === "job retry interrupted"
+  )) return new Error(error.message);
+  return new Error("job runner unavailable");
 }

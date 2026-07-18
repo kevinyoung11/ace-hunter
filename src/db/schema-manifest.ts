@@ -34,6 +34,7 @@ const expectedConstraints = [
   "c:job_runs_counts_check:",
   "f:job_runs_parent_run_id_fkey:n",
   "p:job_runs_pkey:",
+  "c:job_runs_retry_check:",
   "c:job_runs_status_check:",
   "c:job_runs_time_check:",
   "c:job_runs_trigger_check:",
@@ -72,11 +73,11 @@ const expectedConstraints = [
 ] as const;
 
 const expectedFingerprints = {
-  columns: { count: 172, sha256: "439882e91e377d32b119a9d72f1a675702f23226d4b03b6f078a4d36b9e7d669" },
+  columns: { count: 173, sha256: "d6c8c9ce45bb99c23e5546b73573ff622ab757a936b4340cc68d7472d8150412" },
   indexes: { count: 21, sha256: "93dfd140a884d66ff84e949706426de9a46e58bc7dda87da6990f823246bdcd3" },
-  checks: { count: 30, sha256: "6e91c757967f330a97a7e02a343fd4a850237a1a9c5f42573b0bee11b98e8371" },
+  checks: { count: 31, sha256: "23fee1b8e931fa2e427b0f39ae362dbe9047022fce4ac3176eb1d0b7dec0c23a" },
   foreignKeys: { count: 14, sha256: "99b1cbe3610ec64a5804b97d8143453041424a4ce33b5e0fc3c0af4ca36c066b" },
-  constraints: { count: 55, sha256: "1a80ec06fb10a1d71053beb4dcfec424b1a3d7518d6e75e9f086dbfa497af697" },
+  constraints: { count: 56, sha256: "ef86719ee94544b3e1920933e7208b2cc2551fc40073fb3f2541211fa07f136f" },
   policies: { count: 9, sha256: "e6b84227f45078470630416e64cc3f7c0421600239a5e234588910143cbded89" },
   schemaAcl: { count: 3, sha256: "272e6f88097149d73e5b0a7de8190926445431de93d0828051fc8265ebd2b280" },
   tableAcl: { count: 99, sha256: "d2d3c8e945f73aceba1b001b6aec98a2f79e83ac0a2a0ecc20934fef3962f676" },
