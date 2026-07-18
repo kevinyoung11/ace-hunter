@@ -147,14 +147,14 @@ it("persists each approved aggregate through parameterized stores", async () => 
     confidence: 1,
     linkSource: "discovery",
   });
-  const jobRunId = await jobs.create({
+  const jobRunId = (await jobs.claim({
     jobName: "collect_trending",
     triggerType: "schedule",
     scheduledFor: new Date("2026-07-19T00:00:00Z"),
-    status: "running",
+    parametersJson: "{}",
     startedAt: new Date("2026-07-19T00:00:00Z"),
     idempotencyKey: "job-1",
-  });
+  })).run.id;
   await trending.replaceBatch([{
     repositoryId,
     period: "daily",
