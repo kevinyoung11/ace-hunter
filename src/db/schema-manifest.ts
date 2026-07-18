@@ -491,14 +491,28 @@ export async function assertCatalogIsAbsentOrComplete(
            and (grantee.rolname like 'ace_hunter_%' or grantor.rolname like 'ace_hunter_%')) +
        (select count(*) from pg_database database_object
           join pg_roles owner_role on owner_role.oid=database_object.datdba
-         where database_object.datname=current_database()
-           and owner_role.rolname like 'ace_hunter_%') +
+         where owner_role.rolname like 'ace_hunter_%') +
        (select count(*) from pg_database database_object
           cross join lateral aclexplode(database_object.datacl) acl
           left join pg_roles grantee on grantee.oid=acl.grantee
           left join pg_roles grantor on grantor.oid=acl.grantor
-         where database_object.datname=current_database()
-           and (grantee.rolname like 'ace_hunter_%' or grantor.rolname like 'ace_hunter_%'))
+         where grantee.rolname like 'ace_hunter_%' or grantor.rolname like 'ace_hunter_%') +
+       (select count(*) from pg_default_acl defaults
+          join pg_roles owner_role on owner_role.oid=defaults.defaclrole
+         where owner_role.rolname like 'ace_hunter_%') +
+       (select count(*) from pg_default_acl defaults
+          cross join lateral aclexplode(defaults.defaclacl) acl
+          left join pg_roles grantee on grantee.oid=acl.grantee
+          left join pg_roles grantor on grantor.oid=acl.grantor
+         where grantee.rolname like 'ace_hunter_%' or grantor.rolname like 'ace_hunter_%') +
+       (select count(*) from pg_tablespace tablespace_object
+          join pg_roles owner_role on owner_role.oid=tablespace_object.spcowner
+         where owner_role.rolname like 'ace_hunter_%') +
+       (select count(*) from pg_tablespace tablespace_object
+          cross join lateral aclexplode(tablespace_object.spcacl) acl
+          left join pg_roles grantee on grantee.oid=acl.grantee
+          left join pg_roles grantor on grantor.oid=acl.grantor
+         where grantee.rolname like 'ace_hunter_%' or grantor.rolname like 'ace_hunter_%')
      )::int count`,
   );
   const authAceAcl = await client.query<{ entry: string }>(

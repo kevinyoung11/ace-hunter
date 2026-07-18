@@ -19,14 +19,33 @@ begin
   if exists (
     select 1 from pg_database o
       join pg_roles owner_role on owner_role.oid=o.datdba
-     where o.datname=current_database() and owner_role.rolname like 'ace_hunter_%'
+     where owner_role.rolname like 'ace_hunter_%'
     union all
     select 1 from pg_database o
       cross join lateral aclexplode(o.datacl) acl
       left join pg_roles grantee on grantee.oid=acl.grantee
       left join pg_roles grantor on grantor.oid=acl.grantor
-     where o.datname=current_database()
-       and (grantee.rolname like 'ace_hunter_%' or grantor.rolname like 'ace_hunter_%')
+     where grantee.rolname like 'ace_hunter_%' or grantor.rolname like 'ace_hunter_%'
+    union all
+    select 1 from pg_default_acl o
+      join pg_roles owner_role on owner_role.oid=o.defaclrole
+     where owner_role.rolname like 'ace_hunter_%'
+    union all
+    select 1 from pg_default_acl o
+      cross join lateral aclexplode(o.defaclacl) acl
+      left join pg_roles grantee on grantee.oid=acl.grantee
+      left join pg_roles grantor on grantor.oid=acl.grantor
+     where grantee.rolname like 'ace_hunter_%' or grantor.rolname like 'ace_hunter_%'
+    union all
+    select 1 from pg_tablespace o
+      join pg_roles owner_role on owner_role.oid=o.spcowner
+     where owner_role.rolname like 'ace_hunter_%'
+    union all
+    select 1 from pg_tablespace o
+      cross join lateral aclexplode(o.spcacl) acl
+      left join pg_roles grantee on grantee.oid=acl.grantee
+      left join pg_roles grantor on grantor.oid=acl.grantor
+     where grantee.rolname like 'ace_hunter_%' or grantor.rolname like 'ace_hunter_%'
     union all
     select 1 from pg_namespace o
       join pg_roles owner_role on owner_role.oid=o.nspowner

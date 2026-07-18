@@ -350,6 +350,64 @@ describe("complete schema", () => {
     }
   });
 
+  it("bootstrap refuses an Ace ACL on another database without modifying it", async () => {
+    const fixtureDatabase = "ace_hunter_security_fixture";
+    const existing = await adminPool.query<{ exists: boolean }>(
+      "select exists(select 1 from pg_database where datname=$1)",
+      [fixtureDatabase],
+    );
+    if (existing.rows[0]?.exists) {
+      throw new Error(`Refusing to overwrite existing fixture database: ${fixtureDatabase}`);
+    }
+    let created = false;
+    try {
+      await adminPool.query(`create database ${fixtureDatabase}`);
+      created = true;
+      await adminPool.query(
+        `grant connect on database ${fixtureDatabase} to ace_hunter_runtime`,
+      );
+      await expect(execFileAsync("psql", [
+        testDatabaseConfig.adminDatabaseUrl, "-X", "-v", "ON_ERROR_STOP=1",
+        "-f", "ops/01_bootstrap_roles.sql",
+      ])).rejects.toThrow(/external Ace ownership or ACL audit failed/);
+      const direct = await adminPool.query<{ count: number }>(
+        `select count(*)::int count from pg_database d
+          cross join lateral aclexplode(d.datacl) acl
+          join pg_roles grantee on grantee.oid=acl.grantee
+         where d.datname=$1 and grantee.rolname='ace_hunter_runtime'
+           and acl.privilege_type='CONNECT'`,
+        [fixtureDatabase],
+      );
+      expect(direct.rows[0]?.count).toBe(1);
+    } finally {
+      if (created) await adminPool.query(`drop database ${fixtureDatabase}`);
+    }
+  });
+
+  it("bootstrap refuses external default privileges without modifying them", async () => {
+    try {
+      await adminPool.query(
+        "alter default privileges grant select on tables to ace_hunter_runtime",
+      );
+      await expect(execFileAsync("psql", [
+        testDatabaseConfig.adminDatabaseUrl, "-X", "-v", "ON_ERROR_STOP=1",
+        "-f", "ops/01_bootstrap_roles.sql",
+      ])).rejects.toThrow(/external Ace ownership or ACL audit failed/);
+      const direct = await adminPool.query<{ count: number }>(
+        `select count(*)::int count from pg_default_acl defaults
+          cross join lateral aclexplode(defaults.defaclacl) acl
+          join pg_roles grantee on grantee.oid=acl.grantee
+         where grantee.rolname='ace_hunter_runtime'
+           and defaults.defaclobjtype='r' and acl.privilege_type='SELECT'`,
+      );
+      expect(direct.rows[0]?.count).toBe(1);
+    } finally {
+      await adminPool.query(
+        "alter default privileges revoke select on tables from ace_hunter_runtime",
+      );
+    }
+  });
+
   it("production bootstrap preserves an activated complete deployment", async () => {
     try {
       await execFileAsync("psql", [
