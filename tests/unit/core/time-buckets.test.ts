@@ -9,6 +9,7 @@ it("creates stable UTC hour and day buckets", () => {
 
 it("rejects invalid dates", () => {
   expect(() => utcHourBucket(new Date("invalid"))).toThrow();
+  expect(() => utcDayBucket(new Date("invalid"))).toThrow();
 });
 
 it("does not mutate inputs at exact UTC boundaries", () => {

@@ -50,6 +50,34 @@ describe("JobRunner", () => {
     expect(results.filter((result) => result.executed)).toHaveLength(1);
   });
 
+  it("validates live duplicate metadata while the owner still holds the lock", async () => {
+    let release!: () => void;
+    const barrier = new Promise<void>((resolve) => { release = resolve; });
+    const input = { ...baseInput, parameters: { liveMismatch: true } };
+    const first = runner().run(input, async () => {
+      await barrier;
+      return { expected: 0, succeeded: 0, failed: [], skipped: 0 };
+    });
+    while ((await runtimePool.query(
+      "select count(*)::int count from ace_hunter.job_runs where parameters=$1::jsonb",
+      [JSON.stringify(input.parameters)],
+    )).rows[0].count === 0) await new Promise((resolve) => setImmediate(resolve));
+    const mismatches = [
+      { ...input, triggerType: "manual" as const },
+      { ...input, parentRunId: "00000000-0000-4000-8000-000000000001" },
+      { ...input, dataCutoffAt: new Date("2026-07-18T22:00:00Z") },
+    ];
+    const results = await Promise.allSettled(mismatches.map((changed) =>
+      runner().run(changed, vi.fn()),
+    ));
+    release();
+    await first;
+    expect(results.every(
+      (result) => result.status === "rejected" &&
+        result.reason instanceof Error && result.reason.message === "job_run_claim_mismatch",
+    )).toBe(true);
+  });
+
   it("allows different keys to execute concurrently", async () => {
     let active = 0;
     let peak = 0;
@@ -71,12 +99,14 @@ describe("JobRunner", () => {
   it("persists each typed failed attempt before sleeping and reuses one run id", async () => {
     const observed: Array<{ status: string; attempt: number; runId: string; delay: number }> = [];
     let calls = 0;
+    let now = new Date("2026-07-19T00:00:00Z");
     const jobRunner = runner({
       clock: {
-        now: () => new Date(`2026-07-19T00:00:0${calls}.000Z`),
+        now: () => new Date(now),
         sleep: async (delay) => {
           const row = (await runtimePool.query("select id,status,attempt from ace_hunter.job_runs")).rows[0];
           observed.push({ status: row.status, attempt: row.attempt, runId: row.id, delay });
+          now = new Date(now.getTime() + delay);
         },
       },
     });
@@ -113,8 +143,11 @@ describe("JobRunner", () => {
     const handler = vi.fn(async () => {
       throw new JobError("timeout", true, "timeout detail");
     });
+    let now = new Date("2026-07-19T00:00:00Z");
     const jobRunner = runner({
-      clock: { now: () => new Date("2026-07-19T00:00:00Z"), sleep: async (ms) => { sleeps.push(ms); } },
+      clock: { now: () => new Date(now), sleep: async (ms) => {
+        sleeps.push(ms); now = new Date(now.getTime() + ms);
+      } },
     });
     const input = { ...baseInput, parameters: { capped: true } };
     await expect(jobRunner.run(input, handler)).rejects.toThrow("job failed (timeout)");
@@ -163,6 +196,7 @@ describe("JobRunner", () => {
     { expected: Number.MAX_SAFE_INTEGER + 1, succeeded: 0, failed: [], skipped: 0 },
     { expected: 2_147_483_648, succeeded: 2_147_483_648, failed: [], skipped: 0 },
     { expected: 2, succeeded: 0, failed: [{ id: "x", code: "rate_limit" }, { id: "x", code: "rate_limit" }], skipped: 0 },
+    { expected: 1, succeeded: 0, failed: [{ id: "same", code: "rate_limit" }, { id: "same", code: "rate_limit" }], skipped: 0 },
     { expected: 1, succeeded: 0, failed: [{ id: "\n", code: "rate_limit" }], skipped: 0 },
     { expected: 2, succeeded: 0, failed: [{ id: "x", code: "rate_limit" }, { id: "x\n", code: "rate_limit" }], skipped: 0 },
     { expected: 1, succeeded: 0, failed: [{ id: "x".repeat(513), code: "rate_limit" }], skipped: 0 },
@@ -225,6 +259,14 @@ describe("JobRunner", () => {
     )).rejects.toThrow("invalid_job_input");
   });
 
+  it("detects loaded secrets in raw parameter keys", async () => {
+    const secret = 'opaque"key\\雪';
+    await expect(runner({ loadedSecrets: [secret] }).run(
+      { ...baseInput, parameters: { [`prefix-${secret}-suffix`]: "ordinary" } },
+      vi.fn(),
+    )).rejects.toThrow("invalid_job_input");
+  });
+
   it("passes immutable scheduling context and persists lineage", async () => {
     const parent = await runner().run(
       { ...baseInput, parameters: { parent: true } },
@@ -273,10 +315,11 @@ describe("JobRunner", () => {
     expect(failed.next_attempt_at.toISOString()).toBe("2026-07-19T00:05:00.000Z");
 
     const remaining: number[] = [];
+    let now = new Date("2026-07-19T00:02:00Z");
     const resumed = await runner({
       clock: {
-        now: () => new Date("2026-07-19T00:02:00Z"),
-        sleep: async (ms) => { remaining.push(ms); },
+        now: () => new Date(now),
+        sleep: async (ms) => { remaining.push(ms); now = new Date(now.getTime() + ms); },
       },
     }).run(input, async (ctx) => {
       expect(ctx.attempt).toBe(1);
@@ -284,6 +327,35 @@ describe("JobRunner", () => {
     });
     expect(remaining).toEqual([180_000]);
     expect(resumed).toMatchObject({ runId: failed.id, status: "success", attempt: 1 });
+  });
+
+  it("keeps a durable retry pending when sleep returns early or the clock rolls back", async () => {
+    for (const [suffix, afterSleep] of [
+      ["early", new Date("2026-07-19T00:04:59Z")],
+      ["rollback", new Date("2026-07-18T23:59:00Z")],
+    ] as const) {
+      const input = { ...baseInput, parameters: { pending: suffix } };
+      await expect(runner({
+        clock: {
+          now: () => new Date("2026-07-19T00:00:00Z"),
+          sleep: async () => { throw new Error("stop"); },
+        },
+      }).run(input, async () => { throw new JobError("rate_limit", true, "later"); }))
+        .rejects.toThrow("job retry interrupted");
+      let current = new Date("2026-07-19T00:02:00Z");
+      const handler = vi.fn(async () => ({ expected: 0, succeeded: 0, failed: [], skipped: 0 }));
+      await expect(runner({
+        clock: {
+          now: () => new Date(current),
+          sleep: async () => { current = new Date(afterSleep); },
+        },
+      }).run(input, handler)).rejects.toThrow("job retry interrupted");
+      expect(handler).not.toHaveBeenCalled();
+      expect((await runtimePool.query(
+        "select status,attempt,next_attempt_at from ace_hunter.job_runs where parameters=$1::jsonb",
+        [JSON.stringify(input.parameters)],
+      )).rows[0]).toMatchObject({ status: "failed", attempt: 0 });
+    }
   });
 
   it("consumes orphan attempts and refuses an exhausted running orphan", async () => {
@@ -419,6 +491,19 @@ describe("JobRunner", () => {
     }
     expect(rejected?.message).toBe("job failed (unexpected_job_error)");
     expect(rejected?.stack).not.toContain(secret);
+  });
+
+  it("rejects a lock pool aimed at a different database target", async () => {
+    const otherTarget = new Pool({ connectionString: config.runtimeDatabaseUrl.replace(
+      "/ace_hunter_test",
+      "/different_database",
+    ) });
+    try {
+      expect(() => new JobRunner(runtimePool, { lockPool: otherTarget, loadedSecrets: [] }))
+        .toThrow("invalid_job_runner_options");
+    } finally {
+      await otherTarget.end();
+    }
   });
 
   it("clones dates before awaiting a database connection", async () => {

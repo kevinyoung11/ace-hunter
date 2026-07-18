@@ -33,6 +33,34 @@ describe("retry policy", () => {
       .not.toBe(jobIdempotencyKey("a", new Date("2026-07-19T00:00:00Z"), { 雪: "火" }));
   });
 
+  it("uses exact UTF-16 code-unit key order and preserves __proto__ as data", () => {
+    expect(canonicalJobParameters({ Z: 1, a: 1, ä: 1, _: 1, "10": 1, "2": 1 }))
+      .toBe('{"10":1,"2":1,"Z":1,"_":1,"a":1,"ä":1}');
+    const withProto = JSON.parse('{"__proto__":1}') as Record<string, unknown>;
+    expect(canonicalJobParameters(withProto)).toBe('{"__proto__":1}');
+    expect(jobIdempotencyKey("x", new Date("2026-07-19T00:00:00Z"), withProto))
+      .not.toBe(jobIdempotencyKey("x", new Date("2026-07-19T00:00:00Z"), {}));
+  });
+
+  it("rejects oversized raw strings before calling JSON.stringify", () => {
+    const stringify = vi.spyOn(JSON, "stringify");
+    try {
+      expect(() => canonicalJobParameters({ value: "x".repeat(2_000_000) }))
+        .toThrow(/string|byte/i);
+      expect(stringify).not.toHaveBeenCalled();
+    } finally {
+      stringify.mockRestore();
+    }
+  });
+
+  it("enforces default array and node/key limits", () => {
+    expect(() => canonicalJobParameters({ values: Array.from({ length: 10_001 }, () => 1) }))
+      .toThrow(/array/i);
+    expect(() => canonicalJobParameters(Object.fromEntries(
+      Array.from({ length: 10_001 }, (_, index) => [`k${index}`, index]),
+    ))).toThrow(/key|node/i);
+  });
+
   it.each([
     ["undefined", { value: undefined }],
     ["function", { value: () => 1 }],

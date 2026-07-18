@@ -77,6 +77,11 @@ export class JobRunStore {
     if (inserted.rowCount === 1) return { run: mapRow(inserted.rows[0]), inserted: true };
     const existing = await this.readByKey(input.idempotencyKey);
     if (!existing) throw new Error("job_run_claim_conflict_missing");
+    await this.assertExactClaim(input);
+    return { run: existing, inserted: false };
+  }
+
+  public async assertExactClaim(input: JobClaimInput): Promise<void> {
     const match = await this.database.query<{ matches: boolean }>(
       `select job_name=$2 and trigger_type=$3 and parent_run_id is not distinct from $4::uuid
           and scheduled_for=$5 and data_cutoff_at is not distinct from $6::timestamptz
@@ -86,7 +91,6 @@ export class JobRunStore {
         input.scheduledFor, input.dataCutoffAt ?? null, input.parametersJson],
     );
     if (match.rows[0]?.matches !== true) throw new Error("job_run_claim_mismatch");
-    return { run: existing, inserted: false };
   }
 
   public async readByKey(idempotencyKey: string): Promise<JobRunRecord | null> {
@@ -116,6 +120,7 @@ export class JobRunStore {
           completed_at=null,error_summary=null,next_attempt_at=null,items_expected=null,
           items_succeeded=null,items_failed=null,items_skipped=null,failed_items='[]'::jsonb
        where id=$1 and status='failed' and attempt=$2 and next_attempt_at is not null
+         and next_attempt_at<=$4
        returning ${returningColumns}`,
       [input.id, input.attempt, input.attempt + 1, input.startedAt],
     );

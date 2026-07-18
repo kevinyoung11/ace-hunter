@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import { z } from "zod";
 import type { Clock } from "../core/clock.js";
@@ -108,7 +109,10 @@ export class JobRunner {
   private readonly duplicatePollMs: number;
 
   public constructor(private readonly pool: Pool, options: JobRunnerOptions) {
-    if (!options || options.lockPool === pool || !Array.isArray(options.loadedSecrets)) {
+    if (
+      !options || options.lockPool === pool || !Array.isArray(options.loadedSecrets) ||
+      poolTargetFingerprint(options.lockPool) !== poolTargetFingerprint(pool)
+    ) {
       throw new Error("invalid_job_runner_options");
     }
     this.lockPool = options.lockPool;
@@ -142,10 +146,8 @@ export class JobRunner {
         [key],
       );
       lockHeld = lock.rows[0]?.acquired === true;
-      if (!lockHeld) return await this.liveDuplicateOutcome(client, key);
-
       const store = new JobRunStore(client);
-      const claim = await store.claim({
+      const claimInput = {
         jobName: validated.name,
         triggerType: validated.triggerType,
         parentRunId: validated.parentRunId,
@@ -154,15 +156,21 @@ export class JobRunner {
         parametersJson: validated.parametersJson,
         startedAt: this.validNow(),
         idempotencyKey: key,
-      });
+      };
+      if (!lockHeld) return await this.liveDuplicateOutcome(client, claimInput);
+      const claim = await store.claim(claimInput);
       if (!claim.inserted) {
         if (claim.run.status === "failed" && claim.run.nextAttemptAt && claim.run.attempt < 2) {
           const remaining = Math.max(0, claim.run.nextAttemptAt.getTime() - this.validNow().getTime());
           if (remaining > 0) await this.safeSleep(remaining);
+          const retryStartedAt = this.validNow();
+          if (retryStartedAt.getTime() < claim.run.nextAttemptAt.getTime()) {
+            throw new Error("job retry interrupted");
+          }
           const resumed = await store.prepareRetry({
             id: claim.run.id,
             attempt: claim.run.attempt,
-            startedAt: this.validNow(),
+            startedAt: retryStartedAt,
           });
           return await this.executeAttempts(store, resumed, validated, handler);
         }
@@ -253,18 +261,27 @@ export class JobRunner {
         });
         if (delay === null) throw new Error(`job failed (${failure.code})`);
         await this.safeSleep(delay);
-        await store.prepareRetry({ id: initial.id, attempt, startedAt: this.validNow() });
+        const retryStartedAt = this.validNow();
+        const retryDeadline = completedAt.getTime() + delay;
+        if (retryStartedAt.getTime() < retryDeadline) throw new Error("job retry interrupted");
+        await store.prepareRetry({ id: initial.id, attempt, startedAt: retryStartedAt });
         attempt = nextAttempt;
       }
     }
   }
 
-  private async liveDuplicateOutcome(client: PoolClient, key: string): Promise<JobRunOutcome> {
+  private async liveDuplicateOutcome(
+    client: PoolClient,
+    claimInput: Parameters<JobRunStore["assertExactClaim"]>[0],
+  ): Promise<JobRunOutcome> {
     const store = new JobRunStore(client);
     const deadline = this.validNow().getTime() + this.duplicateDeadlineMs;
     for (let index = 0; index < 1_000; index += 1) {
-      const existing = await store.readByKey(key);
-      if (existing) return outcome(existing, false);
+      const existing = await store.readByKey(claimInput.idempotencyKey);
+      if (existing) {
+        await store.assertExactClaim(claimInput);
+        return outcome(existing, false);
+      }
       if (this.validNow().getTime() >= deadline) break;
       await this.clock.sleep(this.duplicatePollMs);
     }
@@ -301,8 +318,9 @@ function validateInput(input: JobInput, loadedSecrets: readonly string[]): Valid
     requireDate(input.scheduledFor);
     if (input.dataCutoffAt) requireDate(input.dataCutoffAt);
     if (input.parentRunId && !uuid.test(input.parentRunId)) throw new Error("parent run id");
-    const parametersJson = canonicalJobParameters(input.parameters);
-    rejectSensitiveValues(input.parameters, loadedSecrets);
+    const parametersJson = canonicalJobParameters(input.parameters, {}, {
+      validateString: (value, kind) => validateParameterString(value, kind, loadedSecrets),
+    });
     return {
       ...input,
       scheduledFor: new Date(input.scheduledFor),
@@ -318,30 +336,18 @@ function requireDate(value: Date): void {
   if (!(value instanceof Date) || !Number.isFinite(value.getTime())) throw new Error("date");
 }
 
-function rejectSensitiveValues(value: unknown, loadedSecrets: readonly string[]): void {
-  if (typeof value === "string") {
-    if (
-      value.length > 2_048 || hasControlCharacters(value) ||
-      loadedSecrets.some((secret) => secret.length > 0 && value.includes(secret)) ||
-      redact(value, loadedSecrets) !== value
-    ) {
-      throw new Error("unsafe parameter string");
-    }
-    return;
+function validateParameterString(
+  value: string,
+  kind: "key" | "value",
+  loadedSecrets: readonly string[],
+): void {
+  if (kind === "key" && (value.length === 0 || sensitiveKey.test(value))) {
+    throw new Error("sensitive parameter key");
   }
-  if (Array.isArray(value)) {
-    for (const child of value) rejectSensitiveValues(child, loadedSecrets);
-    return;
-  }
-  if (value && typeof value === "object") {
-    for (const [key, child] of Object.entries(value)) {
-      if (key.length === 0 || key.length > 128 || hasControlCharacters(key)) {
-        throw new Error("unsafe parameter key");
-      }
-      if (sensitiveKey.test(key)) throw new Error("sensitive parameter key");
-      rejectSensitiveValues(child, loadedSecrets);
-    }
-  }
+  if (
+    loadedSecrets.some((secret) => secret.length > 0 && value.includes(secret)) ||
+    redact(value, loadedSecrets) !== value
+  ) throw new Error("sensitive parameter string");
 }
 
 function validateResult(value: unknown, loadedSecrets: readonly string[]): JobResult {
@@ -369,10 +375,15 @@ function classifyFailure(
   if (error instanceof InvalidJobResultError) {
     return { code: "invalid_job_result", retryable: false, summary: "invalid_job_result" };
   }
-  if (!(error instanceof JobError) || !allowedJobErrorCodes.has(error.code)) {
+  if (
+    !(error instanceof JobError) || typeof error.code !== "string" ||
+    typeof error.retryable !== "boolean" || typeof error.safeMessage !== "string" ||
+    !allowedJobErrorCodes.has(error.code)
+  ) {
     return { code: "unexpected_job_error", retryable: false, summary: "unexpected_job_error" };
   }
-  const message = cleanText(redact(error.safeMessage, loadedSecrets), 512);
+  const boundedRawMessage = error.safeMessage.slice(0, 2_048);
+  const message = cleanText(redact(boundedRawMessage, loadedSecrets), 512);
   return {
     code: error.code,
     retryable: error.retryable && !neverRetryCodes.has(error.code),
@@ -389,13 +400,6 @@ function cleanText(value: string, maxLength: number): string {
     .join("")
     .trim()
     .slice(0, maxLength);
-}
-
-function hasControlCharacters(value: string): boolean {
-  return [...value].some((character) => {
-    const code = character.codePointAt(0) ?? 0;
-    return code <= 31 || (code >= 127 && code <= 159);
-  });
 }
 
 function outcome(run: JobRunRecord, executed: boolean): JobRunOutcome {
@@ -424,4 +428,41 @@ function sanitizeRunnerError(error: unknown): Error {
     error.message === "job retry interrupted"
   )) return new Error(error.message);
   return new Error("job runner unavailable");
+}
+
+function poolTargetFingerprint(pool: Pool): string {
+  const options = pool.options as unknown as Record<string, unknown>;
+  const target = {
+    connectionString: scalarPoolOption(options.connectionString),
+    host: scalarPoolOption(options.host),
+    port: scalarPoolOption(options.port),
+    database: scalarPoolOption(options.database),
+    user: scalarPoolOption(options.user),
+    password: scalarPoolOption(options.password),
+    ssl: safePoolSslOption(options.ssl),
+  };
+  return createHash("sha256").update(JSON.stringify(target)).digest("hex");
+}
+
+function scalarPoolOption(value: unknown): string | number | boolean | null {
+  if (value === undefined || value === null) return null;
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return value;
+  }
+  throw new Error("invalid_job_runner_options");
+}
+
+function safePoolSslOption(value: unknown): string | number | boolean | null {
+  if (value === undefined || value === null) return null;
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return value;
+  }
+  try {
+    const serialized = JSON.stringify(value);
+    return typeof serialized === "string"
+      ? createHash("sha256").update(serialized).digest("hex")
+      : "unserializable";
+  } catch {
+    throw new Error("invalid_job_runner_options");
+  }
 }

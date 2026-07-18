@@ -644,11 +644,14 @@ items_skipped INTEGER
 failed_items JSONB
 error_summary TEXT
 attempt INTEGER
+next_attempt_at TIMESTAMPTZ NULL
 idempotency_key TEXT NOT NULL UNIQUE
 created_at TIMESTAMPTZ
 ```
 
-少量实体级失败放入 `failed_items`。超过 1,000 个持续对象后再评估是否拆分 `job_run_items`。
+少量实体级失败放入 `failed_items`。超过 1,000 个持续对象后再评估是否拆分 `job_run_items`。可重试失败先原子写成 `failed`，并把确定的恢复期限写入 `next_attempt_at`；`job_runs_retry_check` 保证该字段只会出现在 `attempt < 2`、已有 `completed_at` 的失败行。进程重启后继续等待剩余时间并恢复同一 Run；提前唤醒或时钟回退保持 Pending，不提前执行。遗留的 `running` 行在获得会话锁后原子消耗下一次 Attempt，Attempt 2 的遗留行直接以 `orphan_retry_exhausted` 终止。因此执行语义明确为 At-least-once，Handler 必须在自己的外部副作用边界保持幂等。
+
+Job Runner 使用两个指向同一 Runtime PostgreSQL 身份、但对象和连接池均独立的 Pool：Lock Pool 的专用 Session 持有 `pg_try_advisory_lock(hashtextextended(...))`，贯穿 Claim、Handler、Retry Sleep 和最终 Unlock；业务 Handler 只使用 Data Pool。Live Duplicate 在当前 Lock Client 上读取并严格核对 Job Name、Trigger、Parent、Schedule、Cutoff 和 Canonical Parameters，不得再次向 Data Pool 借连接。两个 Pool 的安全目标指纹不一致时构造即失败，指纹和错误均不得输出 DSN 或密码。Composition Root 必须给 Runner 显式传入 `loadRedactionRegistry(process.env)` 的结果。
 
 ## 11. 关键索引与幂等
 
