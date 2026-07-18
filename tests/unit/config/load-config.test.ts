@@ -102,4 +102,28 @@ describe("loadConfig", () => {
       rmSync(directory, { recursive: true });
     }
   });
+
+  it.each(['"unterminated', "'unterminated", "`unterminated", '"ok" trailing'])(
+    "rejects malformed quoted dotenv value %s",
+    (malformedToken) => {
+      const directory = mkdtempSync(join(tmpdir(), "ace-hunter-config-"));
+      const envPath = join(directory, "runtime.env");
+      writeFileSync(
+        envPath,
+        [
+          `ACE_HUNTER_RUNTIME_DATABASE_URL=${valid.ACE_HUNTER_RUNTIME_DATABASE_URL}`,
+          `ACE_HUNTER_GITHUB_TOKEN=${malformedToken}`,
+          `ACE_HUNTER_USER_ID=${valid.ACE_HUNTER_USER_ID}`,
+        ].join("\n"),
+        { mode: 0o600 },
+      );
+      try {
+        expect(() => loadRuntimeConfig({ ACE_HUNTER_ENV_FILE: envPath })).toThrow(
+          /Invalid dotenv syntax/,
+        );
+      } finally {
+        rmSync(directory, { recursive: true });
+      }
+    },
+  );
 });

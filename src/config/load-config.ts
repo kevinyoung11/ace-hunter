@@ -20,7 +20,7 @@ function mergedEnv(env: NodeJS.ProcessEnv | Record<string, string | undefined>) 
 function parseStrictDotenv(source: string): Record<string, string> {
   const normalized = source.replace(/\r\n?/g, "\n");
   const assignment =
-    /^\s*(?:export\s+)?[\w.-]+(?:\s*=\s*?|:\s+?)(?:\s*'(?:\\'|[^'])*'|\s*"(?:\\"|[^"])*"|\s*`(?:\\`|[^`])*`|[^#\r\n]+)?\s*(?:#.*)?$/gm;
+    /^\s*(?:export\s+)?[\w.-]+(?:\s*=\s*?|:\s+?)(?:\s*'(?:\\'|[^'])*'|\s*"(?:\\"|[^"])*"|\s*`(?:\\`|[^`])*`|(?!\s*['"`])[^#\r\n]+)?\s*(?:#.*)?$/gm;
   let cursor = 0;
   let match: RegExpExecArray | null;
   while ((match = assignment.exec(normalized)) !== null) {
