@@ -1,13 +1,18 @@
 import type { Pool } from "pg";
 import { utcHourBucket } from "../core/time-buckets.js";
 import { SnapshotStore } from "../db/stores/snapshot-store.js";
-import { createProductFromRepo, type CapacityReviewOptions } from "../products/create-product-from-repo.js";
+import { createProductFromRepo, type CapacityReviewOptions, type ProductFromRepoResult } from "../products/create-product-from-repo.js";
 import type { GitHubRepository, GitHubSource } from "../sources/github/github-source.js";
 import { GitHubSourceError } from "../sources/github/github-source.js";
 import { candidateBuckets, searchCompletely } from "../sources/github/repository-search.js";
 import { JobError, type JobResult } from "./job-runner.js";
 
-export interface DiscoverGithubDependencies { pool: Pool; source: GitHubSource }
+export interface OperationalEvent { code: "capacity_warning"; trackedCount: number }
+export interface DiscoverGithubDependencies {
+  pool: Pool;
+  source: GitHubSource;
+  emitOperationalEvent: (event: OperationalEvent) => void | Promise<void>;
+}
 export interface DiscoverGithubOptions extends CapacityReviewOptions { runId?: string }
 
 const day = 86_400_000;
@@ -24,7 +29,7 @@ export async function discoverGithubCandidates(
   }
   let rateLimit: { remaining: number; resetAt: Date };
   try { rateLimit = await dependencies.source.getRateLimit(); }
-  catch { throw new JobError("source_unavailable", true, "github source unavailable"); }
+  catch (error) { throw toJobError(error); }
   if (rateLimit.remaining < 1) throw new JobError("rate_limit", true, "github search rate limited");
 
   const rules = [
@@ -42,8 +47,7 @@ export async function discoverGithubCandidates(
       }
     }
   } catch (error) {
-    const code = error instanceof GitHubSourceError && error.code.includes("rate") ? "rate_limit" : "source_unavailable";
-    throw new JobError(code, true, "github candidate search incomplete");
+    throw toJobError(error);
   }
 
   const failed: Array<{ id: string; code: string }> = [];
@@ -53,38 +57,48 @@ export async function discoverGithubCandidates(
     let repository: GitHubRepository;
     try {
       repository = await dependencies.source.getRepository(searchRepository.fullName);
-      if (!repository.description?.trim()) {
-        repository = { ...repository, hasReadme: await dependencies.source.hasReadme(repository.fullName) };
+      if (repository.githubRepoId !== searchRepository.githubRepoId || repository.nodeId !== searchRepository.nodeId) {
+        throw new GitHubSourceError("repository_identity_mismatch");
       }
     } catch (error) {
-      failed.push({ id: safeItemId(searchRepository), code: itemFailureCode(error) });
+      if (systemicError(error)) throw toJobError(error);
+      pushFailure(failed, { id: safeItemId(searchRepository), code: itemFailureCode(error) });
       continue;
     }
     let buckets: string[];
     try { buckets = candidateBuckets(repository, at); }
-    catch { failed.push({ id: safeItemId(searchRepository), code: "invalid_data" }); continue; }
+    catch { pushFailure(failed, { id: safeItemId(searchRepository), code: "invalid_data" }); continue; }
     if (!eligible(repository, buckets)) { skipped += 1; continue; }
-    const client = await dependencies.pool.connect();
+    let created: ProductFromRepoResult;
     try {
-      await client.query("begin");
-      const created = await createProductFromRepo(client, repository, options);
-      await new SnapshotStore(client).insert({
-        repositoryId: created.repositoryId, capturedAt: utcHourBucket(at), granularity: "hourly",
-        stars: repository.stars, forks: repository.forks, commits30d: null, prTotal: null,
-        prOpen: null, prMerged: null, releasesCount: null, issuesTotal: null, issuesOpen: null,
-        issuesClosed: null, candidateBuckets: buckets, candidateRuleVersion: "v1",
-        collectedFields: {
-          core: true,
-          source_job_run_id: options.runId ?? null,
-          capacity_review_id: options.reviewedCapacityOverride ? options.capacityReviewId : null,
-        },
+      created = await createProductFromRepo(dependencies.pool, repository, options, async (client, persisted) => {
+        await new SnapshotStore(client).insert({
+          repositoryId: persisted.repositoryId, capturedAt: utcHourBucket(at), granularity: "hourly",
+          stars: repository.stars, forks: repository.forks, commits30d: null, prTotal: null,
+          prOpen: null, prMerged: null, releasesCount: null, issuesTotal: null, issuesOpen: null,
+          issuesClosed: null, candidateBuckets: buckets, candidateRuleVersion: "v1",
+          collectedFields: {
+            core: true,
+            source_job_run_id: options.runId ?? null,
+            capacity_review_id: options.reviewedCapacityOverride ? options.capacityReviewId : null,
+          },
+        });
       });
-      await client.query("commit");
-      succeeded += 1;
     } catch (error) {
-      await client.query("rollback");
-      failed.push({ id: safeItemId(repository), code: itemFailureCode(error) });
-    } finally { client.release(); }
+      if (error instanceof Error && error.message === "capacity_review_required") {
+        throw new JobError("capacity_review_required", false, "repository capacity review required");
+      }
+      if (error instanceof Error && error.message === "capacity_hard_limit") {
+        throw new JobError("capacity_hard_limit", false, "repository capacity hard limit reached");
+      }
+      pushFailure(failed, { id: safeItemId(repository), code: itemFailureCode(error) });
+      continue;
+    }
+    succeeded += 1;
+    if (created.created && created.trackedCount >= 800) {
+      try { await dependencies.emitOperationalEvent({ code: "capacity_warning", trackedCount: created.trackedCount }); }
+      catch { throw new JobError("source_unavailable", true, "operational event unavailable"); }
+    }
   }
   return { expected: found.size, succeeded, failed, skipped };
 }
@@ -103,6 +117,25 @@ function itemFailureCode(error: unknown): "rate_limit" | "not_found" | "invalid_
   const code = error instanceof GitHubSourceError ? error.code : error instanceof Error ? error.message : "";
   if (code.includes("rate")) return "rate_limit";
   if (code.includes("404") || code.includes("not_found")) return "not_found";
-  if (code.includes("invalid") || code.includes("private") || code.includes("capacity")) return "invalid_data";
+  if (code.includes("invalid") || code.includes("identity") || code.includes("private") || code.includes("capacity")) return "invalid_data";
   return "item_failed";
+}
+
+function pushFailure(failed: Array<{ id: string; code: string }>, item: { id: string; code: string }): void {
+  if (failed.length >= 1_000) throw new JobError("validation_error", false, "too many failed github items");
+  failed.push(item);
+}
+
+function systemicError(error: unknown): boolean {
+  if (!(error instanceof GitHubSourceError)) return false;
+  return !new Set(["not_found", "repository_inaccessible", "repository_invalid", "repository_identity_mismatch"]).has(error.code);
+}
+
+function toJobError(error: unknown): JobError {
+  const code = error instanceof GitHubSourceError ? error.code : "source_unavailable";
+  if (code.includes("rate") || code.includes("budget")) return new JobError("rate_limit", true, "github source rate limited");
+  if (code.includes("auth")) return new JobError("authentication_error", false, "github authentication failed");
+  if (code.includes("timeout")) return new JobError("timeout", true, "github source timed out");
+  if (code.includes("network")) return new JobError("network_error", true, "github source unavailable");
+  return new JobError("source_unavailable", true, "github source unavailable");
 }

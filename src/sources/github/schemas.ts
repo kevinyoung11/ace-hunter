@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { GitHubRepository } from "./github-source.js";
+import { safePublicHomepage, validateGitHubIdentityUrls } from "./url-validation.js";
 
 const safeId = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
 const bounded = (max: number) => z.string().min(1).max(max);
@@ -60,29 +61,21 @@ export const githubRateLimitSchema = z.object({
 export function mapGitHubRepository(value: z.infer<typeof githubRepositorySchema>): GitHubRepository {
   if (value.private || value.visibility !== "public") throw new Error("private_repository");
   if (value.disabled) throw new Error("repository_inaccessible");
-  const repoUrl = new URL(value.html_url);
-  const ownerUrl = new URL(value.owner.html_url);
-  const avatarUrl = new URL(value.owner.avatar_url);
-  if (repoUrl.protocol !== "https:" || repoUrl.hostname !== "github.com" ||
-      repoUrl.pathname.replace(/\/$/, "").toLowerCase() !== `/${value.full_name}`.toLowerCase() ||
-      ownerUrl.protocol !== "https:" || ownerUrl.hostname !== "github.com" ||
-      ownerUrl.pathname.replace(/\/$/, "").toLowerCase() !== `/${value.owner.login}`.toLowerCase() ||
-      avatarUrl.protocol !== "https:" || !avatarUrl.hostname.endsWith("githubusercontent.com")) {
-    throw new Error("repository_identity_invalid");
-  }
+  const urls = validateGitHubIdentityUrls({ fullName: value.full_name, ownerLogin: value.owner.login,
+    repoUrl: value.html_url, ownerUrl: value.owner.html_url, avatarUrl: value.owner.avatar_url });
   return {
     githubRepoId: value.id,
     nodeId: value.node_id,
     ownerId: value.owner.id,
     ownerLogin: value.owner.login,
     ownerType: value.owner.type,
-    ownerProfileUrl: value.owner.html_url,
-    ownerAvatarUrl: value.owner.avatar_url,
+    ownerProfileUrl: urls.ownerUrl,
+    ownerAvatarUrl: urls.avatarUrl,
     name: value.name,
     fullName: value.full_name,
     description: value.description,
-    repoUrl: value.html_url,
-    homepageUrl: safeHomepage(value.homepage),
+    repoUrl: urls.repoUrl,
+    homepageUrl: safePublicHomepage(value.homepage),
     defaultBranch: value.default_branch,
     language: value.language,
     license: value.license?.spdx_id ?? null,
@@ -99,20 +92,4 @@ export function mapGitHubRepository(value: z.infer<typeof githubRepositorySchema
     isTemplate: value.is_template,
     isMirror: value.mirror_url !== null,
   };
-}
-
-function safeHomepage(value: string | null): string | null {
-  if (!value) return null;
-  try {
-    const url = new URL(value);
-    if (!new Set(["http:", "https:"]).has(url.protocol) || url.username || url.password) return null;
-    const host = url.hostname.toLowerCase();
-    if (host === "localhost" || host.endsWith(".localhost") || host === "0.0.0.0" || host === "::1") return null;
-    if (/^127\./.test(host) || /^10\./.test(host) || /^192\.168\./.test(host)) return null;
-    const private172 = /^172\.(\d+)\./.exec(host);
-    if (private172 && Number(private172[1]) >= 16 && Number(private172[1]) <= 31) return null;
-    return url.toString();
-  } catch {
-    return null;
-  }
 }

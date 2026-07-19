@@ -23,7 +23,7 @@ export function splitSearchSlice(slice: SearchSlice): [SearchSlice, SearchSlice]
   const fromSecond = slice.from.getTime() / secondMs;
   const toSecond = slice.to.getTime() / secondMs;
   if (fromSecond < toSecond) {
-    const middleSecond = Math.floor((fromSecond + toSecond) / 2);
+    const middleSecond = fromSecond + Math.floor((toSecond - fromSecond) / 2);
     return [
       { ...slice, to: new Date(middleSecond * secondMs) },
       { ...slice, from: new Date((middleSecond + 1) * secondMs) },
@@ -32,7 +32,7 @@ export function splitSearchSlice(slice: SearchSlice): [SearchSlice, SearchSlice]
   if (slice.maxStars === undefined || slice.maxStars <= slice.minStars) {
     throw new GitHubSourceError("search_partition_exhausted");
   }
-  const starMiddle = Math.floor((slice.minStars + slice.maxStars) / 2);
+  const starMiddle = slice.minStars + Math.floor((slice.maxStars - slice.minStars) / 2);
   return [
     { ...slice, maxStars: starMiddle },
     { ...slice, minStars: starMiddle + 1 },
@@ -98,7 +98,7 @@ export async function searchCompletely(source: GitHubSource, initial: SearchSlic
       pending.push(right, left);
       continue;
     }
-    if (rawItemsSeen < first.totalCount) throw new Error("github_search_pagination_contradiction");
+    if (rawItemsSeen !== first.totalCount) throw new Error("github_search_pagination_contradiction");
     for (const repository of sliceRepositories) addRepository(repositories, repository);
   }
   return [...repositories.values()].sort((a, b) => a.githubRepoId - b.githubRepoId);
@@ -114,8 +114,9 @@ function validateSlice(slice: SearchSlice): void {
   }
 }
 
-function validatePage(page: { totalCount: number; repositories: GitHubRepository[]; hasNextPage: boolean; nextPage: number | null }, pageNumber: number): void {
+function validatePage(page: { totalCount: number; repositories: GitHubRepository[]; rawItemCount?: number; hasNextPage: boolean; nextPage: number | null }, pageNumber: number): void {
   if (!Number.isSafeInteger(page.totalCount) || page.totalCount < 0 || !Number.isInteger(pageNumber) || pageNumber < 1 ||
+      page.rawItemCount !== undefined && (!Number.isSafeInteger(page.rawItemCount) || page.rawItemCount < page.repositories.length || page.rawItemCount > 100) ||
       page.hasNextPage !== (page.nextPage !== null) || page.nextPage !== null && (!Number.isInteger(page.nextPage) || page.nextPage <= pageNumber)) {
     throw new Error("github_search_pagination_contradiction");
   }

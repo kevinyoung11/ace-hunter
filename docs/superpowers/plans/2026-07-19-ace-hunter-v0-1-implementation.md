@@ -852,7 +852,7 @@ export async function searchCompletely(source: GitHubSource, initial: SearchSlic
 }
 ```
 
-`github-http-client.ts` builds `created:from..to stars:min..max fork:false archived:false mirror:false`, sends `Accept: application/vnd.github+json` and `Authorization: Bearer`, validates each response with Zod, checks `/rate_limit` before search, and waits until `x-ratelimit-reset` after a 403/429. The token never appears in an Error.
+`github-http-client.ts` builds `created:from..to stars:min..max is:public archived:false mirror:false`. It does not send the undocumented `fork:false`: GitHub Search excludes forks by default unless `fork:true` or `fork:only` is supplied, and response facts are checked again. It sends `Accept: application/vnd.github+json` and `Authorization: Bearer`, validates each response with Zod, checks `/rate_limit` before search, and follows bounded reset/Retry-After handling for primary and secondary limits. The token and response body never appear in an Error.
 
 - [ ] **Step 4: Write the failing discovery integration test**
 
@@ -882,8 +882,8 @@ it("serializes concurrent creation by github_repo_id", async () => {
 });
 
 it("applies 800 warning, 950 review pause, and 1000 hard transaction gates", async () => {
-  await seedTrackedRepositories(globalThis.testPool, 800);
-  expect(await discoverOne(globalThis.testPool, githubRepo({ githubRepoId: 801 }))).toMatchObject({ capacity: "warning" });
+  await seedTrackedRepositories(globalThis.testPool, 799);
+  expect(await discoverOne(globalThis.testPool, githubRepo({ githubRepoId: 800 }))).toMatchObject({ capacity: "warning" });
   await seedTrackedRepositories(globalThis.testPool, 950);
   await expect(discoverOne(globalThis.testPool, githubRepo({ githubRepoId: 951 }))).rejects.toThrow(/capacity_review_required/);
   await seedTrackedRepositories(globalThis.testPool, 1000);
@@ -895,7 +895,7 @@ it("serializes capacity checks for different repositories", async () => {
   const settled = await Promise.allSettled([discoverOne(globalThis.testPool, githubRepo({ githubRepoId: 2001 }), { reviewedOverride: true }), discoverOne(globalThis.testPool, githubRepo({ githubRepoId: 2002 }), { reviewedOverride: true })]);
   expect(settled.filter((x) => x.status === "fulfilled")).toHaveLength(1);
   expect(settled.filter((x) => x.status === "rejected")).toHaveLength(1);
-  expect((await globalThis.testPool.query("select count(*)::int n from ace_hunter.repositories where status='active'")).rows[0].n).toBe(1000);
+  expect((await globalThis.testPool.query("select count(*)::int n from ace_hunter.repositories")).rows[0].n).toBe(1000);
 });
 ```
 
@@ -903,13 +903,24 @@ it("serializes capacity checks for different repositories", async () => {
 
 ```ts
 // src/products/create-product-from-repo.ts
-import type { PoolClient } from "pg";
+import type { Pool, PoolClient } from "pg";
 import type { GitHubRepository } from "../sources/github/github-source.js";
-export async function createProductFromRepo(client: PoolClient, repo: GitHubRepository, options: { reviewedCapacityOverride?: boolean } = {}): Promise<{ productId: string; repositoryId: string; capacity: "ok" | "warning" | "reviewed" }> {
+export async function createProductFromRepo(pool: Pool, repo: GitHubRepository, options: CapacityReviewOptions = {}, afterPersist?: (client: PoolClient,result: ProductFromRepoResult)=>Promise<void>): Promise<ProductFromRepoResult> {
+  const client=await pool.connect();
+  try {
+    await client.query("begin");
+    const result=await persistProductFromRepo(client,repo,options);
+    if(afterPersist) await afterPersist(client,result);
+    await client.query("commit");
+    return result;
+  } catch(error) { await client.query("rollback"); throw error; }
+  finally { client.release(); }
+}
+async function persistProductFromRepo(client: PoolClient, repo: GitHubRepository, options: CapacityReviewOptions): Promise<ProductFromRepoResult> {
   await client.query("select pg_advisory_xact_lock(hashtext('ace_hunter:capacity'))");
   await client.query("select pg_advisory_xact_lock($1)", [repo.githubRepoId]);
   const stored = await client.query<{ id: string }>("select id from ace_hunter.repositories where github_repo_id=$1", [repo.githubRepoId]);
-  const count = Number((await client.query("select count(*)::int n from ace_hunter.repositories where status='active'")).rows[0].n);
+  const count = Number((await client.query("select count(*)::int n from ace_hunter.repositories")).rows[0].n);
   if (!stored.rowCount && count >= 1000) throw new Error("capacity_hard_limit");
   if (!stored.rowCount && count >= 950 && options.reviewedCapacityOverride !== true) throw new Error("capacity_review_required");
   let repositoryId = stored.rows[0]?.id;
@@ -926,13 +937,13 @@ export async function createProductFromRepo(client: PoolClient, repo: GitHubRepo
 }
 ```
 
-`discover-github-candidates.ts` executes the three rule searches, rejects forks/archives/mirrors/inaccessible repositories and repositories missing both description and README, calls `createProductFromRepo` in one transaction, and writes an hourly snapshot with all matching `candidate_buckets` and `candidate_rule_version='v1'`. The transaction takes the `github_repo_id` advisory lock before looking up or inserting any Repo/Product/link, persists Owner profile/avatar URLs, emits an operational warning from 800, pauses automatic discovery at 950 until an explicitly recorded capacity review override, and refuses all new Repos at 1000 even with override. Existing Repo refresh is allowed at every threshold.
+`discover-github-candidates.ts` executes the three rule searches, refreshes every hit through the detail endpoint, rejects forks/archives/mirrors/inaccessible repositories and repositories missing both a nonblank description and README, then calls the public `createProductFromRepo(pool,...)` API. That API owns BEGIN/COMMIT/ROLLBACK and exposes only a controlled `afterPersist` callback so the Product, Repo, Primary link, and first hourly Snapshot are atomic. It fixes lock order as global capacity then 64-bit `github_repo_id`. Capacity counts every tracked repository row regardless of status: new count 800+ emits a sanitized post-commit warning; old count 950+ requires a recorded nonempty review id; old count 1000 always rejects new rows. Existing rows may refresh/reactivate and repair links at every threshold without increasing the count.
 
 - [ ] **Step 6: Run GREEN GitHub discovery checks**
 
 Run: `ACE_TEST_DATABASE_URL=$ACE_TEST_DATABASE_URL npm test -- --run tests/unit/sources/github tests/integration/jobs/discover-github-candidates.test.ts && npm run typecheck && npm run lint`
 
-Expected: slice, dense same-millisecond star split, exclusions, no-gap pagination, Product separation, and idempotency tests PASS.
+Expected: slice, dense same-second star split, exclusions, no-gap pagination, Product separation, and idempotency tests PASS.
 
 - [ ] **Step 7: Commit Task 4**
 

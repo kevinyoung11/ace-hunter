@@ -210,6 +210,8 @@ describe("JobRunner", () => {
       ["typed", new JobError("source_unavailable", false, "typed secret")],
       ["auth", new JobError("authentication_error", true, "auth secret")],
       ["validation", new JobError("validation_error", true, "validation secret")],
+      ["capacity-review", new JobError("capacity_review_required", true, "review secret")],
+      ["capacity-hard", new JobError("capacity_hard_limit", true, "hard secret")],
     ] as const) {
       const handler = vi.fn(async () => { throw error; });
       await expect(runner({ loadedSecrets: ["secret"] }).run({ ...baseInput, parameters: { suffix } }, handler)).rejects.toThrow(/job failed/);

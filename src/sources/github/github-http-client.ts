@@ -26,26 +26,39 @@ export class GitHubHttpClient implements GitHubSource {
   private readonly maxBodyBytes: number;
   private readonly budget: RequestBudget;
   private preflightComplete = false;
+  private pendingResetAt: Date | null = null;
 
   public constructor(private readonly options: GitHubHttpClientOptions) {
-    if (!options.token || options.token.length > 1_024 || /[\r\n]/.test(options.token)) throw new Error("invalid_github_token");
+    if (!options.token || options.token.length > 1_024 || /[\r\n]/.test(options.token)) throw new GitHubSourceError("authentication_error");
     this.fetcher = options.fetcher ?? fetch;
     this.now = options.now ?? (() => new Date());
     this.sleep = options.sleep ?? (async (milliseconds) => await new Promise((resolve) => setTimeout(resolve, milliseconds)));
     this.timeoutMs = options.timeoutMs ?? 15_000;
     this.maxBodyBytes = options.maxBodyBytes ?? 2_000_000;
+    for (const [value, minimum] of [[this.timeoutMs, 1], [this.maxBodyBytes, 1], [options.maxRequests ?? 300, 1], [options.maxWaitMs ?? 60_000, 0]] as const) {
+      if (!Number.isSafeInteger(value) || value < minimum) throw new GitHubSourceError("invalid_client_options");
+    }
     this.budget = new RequestBudget(options.maxRequests ?? 300, options.maxWaitMs ?? 60_000);
   }
 
   public async getRateLimit(): Promise<{ remaining: number; resetAt: Date }> {
-    const { data } = await this.request("/rate_limit", githubRateLimitSchema);
+    this.budget.reset();
+    this.pendingResetAt = null;
+    let { data } = await this.request("/rate_limit", githubRateLimitSchema);
+    if (data.resources.search.remaining === 0) {
+      if (data.resources.search.reset <= 0) throw new GitHubSourceError("rate_limit_reset_invalid");
+      const resetAt = new Date(data.resources.search.reset * 1_000);
+      await this.waitUntil(resetAt);
+      ({ data } = await this.request("/rate_limit", githubRateLimitSchema));
+      if (data.resources.search.remaining === 0) throw new GitHubSourceError("rate_limit");
+    }
     this.preflightComplete = true;
     return { remaining: data.resources.search.remaining, resetAt: new Date(data.resources.search.reset * 1_000) };
   }
 
   public async searchRepositories(slice: SearchSlice, page: number): Promise<GitHubSearchPage> {
     if (!this.preflightComplete) await this.getRateLimit();
-    if (!Number.isInteger(page) || page < 1 || page > 10) throw new Error("invalid_github_page");
+    if (!Number.isInteger(page) || page < 1 || page > 10) throw new GitHubSourceError("invalid_page");
     const query = [
       `created:${formatSecond(slice.from)}..${formatSecond(slice.to)}`,
       `stars:${slice.minStars}..${slice.maxStars ?? "*"}`,
@@ -56,9 +69,12 @@ export class GitHubHttpClient implements GitHubSource {
     if (envelope.data.incomplete_results) envelope = await this.request(`/search/repositories?${search.toString()}`, githubSearchResponseSchema);
     const { data, headers } = envelope;
     if (data.incomplete_results) throw new GitHubSourceError("search_incomplete");
-    const repositories = data.items
-      .filter((item) => item.private === false && item.visibility === "public" && item.disabled === false)
-      .map(mapGitHubRepository);
+    let repositories: GitHubRepository[];
+    try {
+      repositories = data.items
+        .filter((item) => item.private === false && item.visibility === "public" && item.disabled === false)
+        .map(mapGitHubRepository);
+    } catch { throw new GitHubSourceError("repository_invalid"); }
     const nextPage = parseNextPage(headers, page);
     return { totalCount: data.total_count, repositories, rawItemCount: data.items.length, hasNextPage: nextPage !== null, nextPage };
   }
@@ -66,8 +82,13 @@ export class GitHubHttpClient implements GitHubSource {
   public async getRepository(fullName: string): Promise<GitHubRepository> {
     const encoded = encodeFullName(fullName);
     const { data } = await this.request(`/repos/${encoded}`, githubRepositorySchema);
-    const repository = mapGitHubRepository(data);
-    return { ...repository, hasReadme: await this.hasReadme(fullName) };
+    let repository: GitHubRepository;
+    try { repository = mapGitHubRepository(data); } catch (error) {
+      const code = error instanceof Error && error.message === "repository_inaccessible" ? "repository_inaccessible" :
+        error instanceof Error && error.message === "private_repository" ? "not_found" : "repository_invalid";
+      throw new GitHubSourceError(code);
+    }
+    return data.description?.trim() ? repository : { ...repository, hasReadme: await this.hasReadme(fullName) };
   }
 
   public async hasReadme(fullName: string): Promise<boolean> {
@@ -76,16 +97,17 @@ export class GitHubHttpClient implements GitHubSource {
       await this.request(`/repos/${encoded}/readme`, z.object({}).passthrough());
       return true;
     } catch (error) {
-      if (error instanceof GitHubStatusError && error.status === 404) return false;
+      if (error instanceof GitHubSourceError && error.code === "not_found") return false;
       throw error;
     }
   }
 
   private async request<T>(path: string, schema: z.ZodType<T>): Promise<{ data: T; headers: Headers }> {
-    if (!path.startsWith("/") || path.startsWith("//")) throw new Error("invalid_github_path");
+    if (!path.startsWith("/") || path.startsWith("//")) throw new GitHubSourceError("invalid_request");
     const url = new URL(path, "https://api.github.com");
-    if (url.origin !== "https://api.github.com") throw new Error("invalid_github_origin");
+    if (url.origin !== "https://api.github.com") throw new GitHubSourceError("invalid_request");
     for (let attempt = 0; attempt < 2; attempt += 1) {
+      if (this.pendingResetAt) { const reset = this.pendingResetAt; this.pendingResetAt = null; await this.waitUntil(reset); }
       this.budget.consumeRequest();
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), this.timeoutMs);
@@ -104,47 +126,52 @@ export class GitHubHttpClient implements GitHubSource {
         });
       } catch {
         clearTimeout(timer);
-        throw new Error(controller.signal.aborted ? "github_request_timeout" : "github_network_error");
+        throw new GitHubSourceError(controller.signal.aborted ? "timeout" : "network_error");
       }
       if (shouldRetryRateLimit(response)) {
         clearTimeout(timer);
-        if (attempt === 1) throw new Error("github_rate_limited");
+        await cancelBody(response);
+        if (attempt === 1) throw new GitHubSourceError("rate_limit");
         const wait = rateLimitWaitMs(response.headers, this.now());
-        this.budget.allowWait(wait);
-        await this.sleep(wait);
+        await this.waitMilliseconds(wait);
         continue;
       }
-      if (!response.ok) { clearTimeout(timer); throw new GitHubStatusError(response.status); }
+      if (!response.ok) { clearTimeout(timer); await cancelBody(response); throw statusError(response.status); }
       let body: unknown;
       try {
-        body = await readBoundedJson(response, this.maxBodyBytes);
+        body = await readBoundedJson(response, this.maxBodyBytes, controller.signal);
       } catch (error) {
-        if (controller.signal.aborted) throw new Error("github_request_timeout");
+        if (controller.signal.aborted) throw new GitHubSourceError("timeout");
         throw error;
       } finally { clearTimeout(timer); }
       const parsed = schema.safeParse(body);
-      if (!parsed.success) throw new Error("github_response_invalid");
+      if (!parsed.success) throw new GitHubSourceError("response_invalid");
+      const remaining = response.headers.get("x-ratelimit-remaining");
+      if (remaining === "0" && url.pathname.startsWith("/search/")) this.pendingResetAt = parseResetHeader(response.headers);
       return { data: parsed.data, headers: response.headers };
     }
-    throw new Error("github_request_failed");
+    throw new GitHubSourceError("source_unavailable");
   }
-}
 
-class GitHubStatusError extends Error {
-  public constructor(public readonly status: number) {
-    super(`github_http_status_${status}`);
-    this.name = "GitHubStatusError";
+  private async waitUntil(resetAt: Date): Promise<void> {
+    const raw = resetAt.getTime() + 1_000 - this.now().getTime();
+    if (!Number.isFinite(raw)) throw new GitHubSourceError("rate_limit_reset_invalid");
+    await this.waitMilliseconds(Math.max(0, raw));
+  }
+  private async waitMilliseconds(milliseconds: number): Promise<void> {
+    try { this.budget.allowWait(milliseconds); } catch { throw new GitHubSourceError("rate_limit_budget_exceeded"); }
+    await this.sleep(milliseconds);
   }
 }
 
 function encodeFullName(fullName: string): string {
-  if (!fullNamePattern.test(fullName) || fullName.length > 512) throw new Error("invalid_full_name");
+  if (!fullNamePattern.test(fullName) || fullName.length > 512) throw new GitHubSourceError("invalid_full_name");
   return fullName.split("/").map(encodeURIComponent).join("/");
 }
 
 function formatSecond(date: Date): string {
   const milliseconds = date.getTime();
-  if (!Number.isFinite(milliseconds) || milliseconds % 1_000 !== 0) throw new Error("invalid_search_slice");
+  if (!Number.isFinite(milliseconds) || milliseconds % 1_000 !== 0) throw new GitHubSourceError("invalid_search_slice");
   return date.toISOString().replace(".000Z", "Z");
 }
 
@@ -154,11 +181,12 @@ function parseNextPage(headers: Headers, page: number): number | null {
   const next = link.split(",").map((part) => part.trim()).find((part) => /rel="next"/.test(part));
   if (!next) return null;
   const match = /^<([^>]+)>/.exec(next);
-  if (!match) throw new Error("github_response_invalid");
-  const url = new URL(match[1]);
-  if (url.origin !== "https://api.github.com") throw new Error("github_response_invalid");
+  if (!match) throw new GitHubSourceError("response_invalid");
+  let url: URL;
+  try { url = new URL(match[1]); } catch { throw new GitHubSourceError("response_invalid"); }
+  if (url.origin !== "https://api.github.com") throw new GitHubSourceError("response_invalid");
   const nextPage = Number(url.searchParams.get("page"));
-  if (!Number.isInteger(nextPage) || nextPage !== page + 1 || nextPage > 10) throw new Error("github_response_invalid");
+  if (!Number.isInteger(nextPage) || nextPage !== page + 1 || nextPage > 10) throw new GitHubSourceError("response_invalid");
   return nextPage;
 }
 
@@ -180,17 +208,57 @@ function rateLimitWaitMs(headers: Headers, now: Date): number {
   if (Number.isFinite(reset) && reset > 0) return Math.max(0, reset * 1_000 - now.getTime());
   if (headers.get("x-rateLimit-resource")?.toLowerCase() === "search") return 60_000;
   if (!headers.has("retry-after") && !headers.has("x-ratelimit-reset")) return 60_000;
-  throw new Error("github_rate_limit_missing_reset");
+  throw new GitHubSourceError("rate_limit_reset_invalid");
 }
 
-async function readBoundedJson(response: Response, maxBytes: number): Promise<unknown> {
-  const declared = Number(response.headers.get("content-length"));
-  if (Number.isFinite(declared) && declared > maxBytes) throw new Error("github_response_too_large");
-  const bytes = new Uint8Array(await response.arrayBuffer());
-  if (bytes.byteLength > maxBytes) throw new Error("github_response_too_large");
+async function readBoundedJson(response: Response, maxBytes: number, signal: AbortSignal): Promise<unknown> {
+  const contentLength = response.headers.get("content-length");
+  if (contentLength !== null) {
+    const declared = Number(contentLength);
+    if (!Number.isSafeInteger(declared) || declared < 0) { await cancelBody(response); throw new GitHubSourceError("response_invalid"); }
+    if (declared > maxBytes) { await cancelBody(response); throw new GitHubSourceError("response_too_large"); }
+  }
+  const reader = response.body?.getReader();
+  if (!reader) throw new GitHubSourceError("response_invalid");
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  while (true) {
+    const { done, value } = await abortableRead(reader, signal);
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) { await reader.cancel(); throw new GitHubSourceError("response_too_large"); }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(total); let offset = 0;
+  for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
   try {
     return JSON.parse(new TextDecoder().decode(bytes));
   } catch {
-    throw new Error("github_response_invalid");
+    throw new GitHubSourceError("response_invalid");
   }
 }
+
+async function abortableRead(reader: ReadableStreamDefaultReader<Uint8Array>, signal: AbortSignal): Promise<ReadableStreamReadResult<Uint8Array>> {
+  if (signal.aborted) { await reader.cancel(); throw new GitHubSourceError("timeout"); }
+  let onAbort: (() => void) | undefined;
+  const aborted = new Promise<never>((_, reject) => {
+    onAbort = () => reject(new GitHubSourceError("timeout"));
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+  try { return await Promise.race([reader.read(), aborted]); }
+  catch (error) { if (signal.aborted) await reader.cancel(); throw error; }
+  finally { if (onAbort) signal.removeEventListener("abort", onAbort); }
+}
+
+function statusError(status: number): GitHubSourceError {
+  if (status === 401 || status === 403) return new GitHubSourceError("authentication_error");
+  if (status === 404) return new GitHubSourceError("not_found");
+  if (status >= 500) return new GitHubSourceError("source_unavailable");
+  return new GitHubSourceError("response_invalid");
+}
+function parseResetHeader(headers: Headers): Date {
+  const seconds = Number(headers.get("x-ratelimit-reset"));
+  if (!Number.isSafeInteger(seconds) || seconds <= 0) throw new GitHubSourceError("rate_limit_reset_invalid");
+  return new Date(seconds * 1_000);
+}
+async function cancelBody(response: Response): Promise<void> { try { await response.body?.cancel(); } catch { /* ignore */ } }

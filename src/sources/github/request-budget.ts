@@ -5,10 +5,12 @@ export class RequestBudget {
     private readonly maximumRequests = 300,
     private readonly maximumWaitMs = 60_000,
   ) {
-    if (!Number.isInteger(maximumRequests) || maximumRequests < 1 || maximumWaitMs < 0) {
+    if (!Number.isSafeInteger(maximumRequests) || maximumRequests < 1 || !Number.isSafeInteger(maximumWaitMs) || maximumWaitMs < 0) {
       throw new Error("invalid_request_budget");
     }
   }
+
+  public reset(): void { this.used = 0; this.waitedMs = 0; }
 
   public consumeRequest(): void {
     this.used += 1;

@@ -1,8 +1,9 @@
-import type { PoolClient } from "pg";
+import type { Pool, PoolClient } from "pg";
 import { z } from "zod";
 import { ProductStore } from "../db/stores/product-store.js";
 import { RepositoryStore } from "../db/stores/repository-store.js";
 import type { GitHubRepository } from "../sources/github/github-source.js";
+import { safePublicHomepage, validateGitHubIdentityUrls } from "../sources/github/url-validation.js";
 
 export interface CapacityReviewOptions {
   reviewedCapacityOverride?: boolean;
@@ -14,7 +15,10 @@ export interface ProductFromRepoResult {
   repositoryId: string;
   capacity: "ok" | "warning" | "reviewed";
   created: boolean;
+  trackedCount: number;
 }
+
+export type AfterRepoPersist = (client: PoolClient, result: ProductFromRepoResult) => Promise<void>;
 
 const repositorySchema = z.object({
   githubRepoId: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
@@ -41,9 +45,10 @@ const repositorySchema = z.object({
 }).strict();
 
 export async function createProductFromRepo(
-  client: PoolClient,
+  pool: Pool,
   input: GitHubRepository,
   options: CapacityReviewOptions = {},
+  afterPersist?: AfterRepoPersist,
 ): Promise<ProductFromRepoResult> {
   const parsed = repositorySchema.safeParse(input);
   if (!parsed.success || !validDate(parsed.data?.createdAt) || parsed.data?.pushedAt && !validDate(parsed.data.pushedAt)) {
@@ -51,10 +56,32 @@ export async function createProductFromRepo(
   }
   const repo = parsed.data;
   const homepageUrl = safePublicHomepage(repo.homepageUrl);
+  const urls = validateGitHubIdentityUrls({ fullName: repo.fullName, ownerLogin: repo.ownerLogin,
+    repoUrl: repo.repoUrl, ownerUrl: repo.ownerProfileUrl, avatarUrl: repo.ownerAvatarUrl });
+  repo.repoUrl = urls.repoUrl; repo.ownerProfileUrl = urls.ownerUrl; repo.ownerAvatarUrl = urls.avatarUrl;
   if (options.reviewedCapacityOverride === true && !validReviewId(options.capacityReviewId)) {
     throw new Error("capacity_review_id_required");
   }
 
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+    const result = await persistProductFromRepo(client, repo, homepageUrl, options);
+    if (afterPersist) await afterPersist(client, result);
+    await client.query("commit");
+    return result;
+  } catch (error) {
+    try { await client.query("rollback"); } catch { /* preserve the safe original error */ }
+    throw error;
+  } finally { client.release(); }
+}
+
+async function persistProductFromRepo(
+  client: PoolClient,
+  repo: GitHubRepository,
+  homepageUrl: string | null,
+  options: CapacityReviewOptions,
+): Promise<ProductFromRepoResult> {
   // Global capacity first, then the repository id: every caller uses this fixed order.
   await client.query("select pg_advisory_xact_lock(hashtextextended($1,0))", ["ace_hunter:repository_capacity"]);
   await client.query("select pg_advisory_xact_lock($1::bigint)", [repo.githubRepoId]);
@@ -63,7 +90,7 @@ export async function createProductFromRepo(
     [repo.githubRepoId],
   );
   const countResult = await client.query<{ count: number }>(
-    "select count(*)::int count from ace_hunter.repositories where status='active'",
+    "select count(*)::int count from ace_hunter.repositories",
   );
   const oldCount = countResult.rows[0]?.count;
   if (!Number.isInteger(oldCount) || oldCount < 0) throw new Error("capacity_count_invalid");
@@ -91,7 +118,7 @@ export async function createProductFromRepo(
   const capacity = creating && options.reviewedCapacityOverride === true
     ? "reviewed" as const
     : newCount >= 800 ? "warning" as const : "ok" as const;
-  if (linked.rows[0]) return { productId: linked.rows[0].product_id, repositoryId, capacity, created: false };
+  if (linked.rows[0]) return { productId: linked.rows[0].product_id, repositoryId, capacity, created: false, trackedCount: newCount };
 
   const productStore = new ProductStore(client);
   const productId = await productStore.create({
@@ -107,7 +134,7 @@ export async function createProductFromRepo(
     productId, repositoryId, role: "primary", isPrimary: true,
     confidence: 1, linkSource: "github_discovery",
   });
-  return { productId, repositoryId, capacity, created: true };
+  return { productId, repositoryId, capacity, created: true, trackedCount: newCount };
 }
 
 function validDate(value: Date): boolean { return Number.isFinite(value.getTime()); }
@@ -117,14 +144,4 @@ function validReviewId(value: string | undefined): boolean {
 function normalizeDescription(value: string | null): string | null {
   const trimmed = value?.trim();
   return trimmed ? trimmed : null;
-}
-function safePublicHomepage(value: string | null): string | null {
-  if (!value) return null;
-  const url = new URL(value);
-  if (!new Set(["http:", "https:"]).has(url.protocol) || url.username || url.password) return null;
-  const host = url.hostname.toLowerCase();
-  if (host === "localhost" || host.endsWith(".localhost") || /^127\./.test(host) || /^10\./.test(host) || /^192\.168\./.test(host)) return null;
-  const private172 = /^172\.(\d+)\./.exec(host);
-  if (private172 && Number(private172[1]) >= 16 && Number(private172[1]) <= 31) return null;
-  return url.toString();
 }

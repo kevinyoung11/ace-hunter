@@ -51,6 +51,13 @@ describe("search slicing", () => {
     ]);
   });
 
+  it("splits safe-integer star ranges without midpoint overflow", () => {
+    const at = new Date("2026-07-01T00:00:00Z");
+    const [left, right] = splitSearchSlice({ from: at, to: at, minStars: Number.MAX_SAFE_INTEGER - 3, maxStars: Number.MAX_SAFE_INTEGER });
+    expect(left.maxStars! + 1).toBe(right.minStars);
+    expect(right.maxStars).toBe(Number.MAX_SAFE_INTEGER);
+  });
+
   it("fails closed when an exact second and star value remains over 1000", async () => {
     const source = sourceFrom(async () => ({ totalCount: 1001, repositories: [repo(1, 10)], hasNextPage: false, nextPage: null }));
     await expect(searchCompletely(source, {
@@ -81,6 +88,40 @@ describe("search slicing", () => {
       ? { totalCount: 2, repositories: [repo(1, 10)], hasNextPage: true, nextPage: 2 }
       : { totalCount: 2, repositories: [repo(1, 11)], hasNextPage: false, nextPage: null });
     await expect(searchCompletely(conflict, daySlice())).rejects.toThrow(/pagination_contradiction/);
+  });
+
+  it.each([[150, 250], [250, 150]])("rejects total drift from %i to %i", async (firstTotal, secondTotal) => {
+    const source = sourceFrom(async (_slice, page) => page === 1
+      ? { totalCount: firstTotal, repositories: [repo(1)], rawItemCount: 100, hasNextPage: true, nextPage: 2 }
+      : { totalCount: secondTotal, repositories: [repo(2)], rawItemCount: 50, hasNextPage: false, nextPage: null });
+    await expect(searchCompletely(source, daySlice())).rejects.toThrow(/pagination_contradiction/);
+  });
+
+  it("rejects oversupply and page ten that still advertises next", async () => {
+    const oversupply = sourceFrom(async () => ({ totalCount: 1, repositories: [repo(1)], rawItemCount: 2, hasNextPage: false, nextPage: null }));
+    await expect(searchCompletely(oversupply, daySlice())).rejects.toThrow(/pagination_contradiction/);
+    const endless = sourceFrom(async (_slice, page) => ({
+      totalCount: 1_000,
+      repositories: Array.from({ length: 100 }, (_, index) => repo((page - 1) * 100 + index + 1)),
+      rawItemCount: 100, hasNextPage: true, nextPage: page + 1,
+    }));
+    await expect(searchCompletely(endless, daySlice())).rejects.toThrow(/pagination_contradiction/);
+  });
+
+  it("discards partial pages and reslices when a later page reports over 1000", async () => {
+    let initialCalls = 0;
+    const initial = daySlice();
+    const source = sourceFrom(async (slice, page) => {
+      if (slice.from.getTime() === initial.from.getTime() && slice.to.getTime() === initial.to.getTime()) {
+        initialCalls += 1;
+        return page === 1
+          ? { totalCount: 500, repositories: [repo(1)], rawItemCount: 100, hasNextPage: true, nextPage: 2 }
+          : { totalCount: 1_001, repositories: [], rawItemCount: 0, hasNextPage: false, nextPage: null };
+      }
+      return { totalCount: 0, repositories: [], rawItemCount: 0, hasNextPage: false, nextPage: null };
+    });
+    expect(await searchCompletely(source, initial)).toEqual([]);
+    expect(initialCalls).toBe(2);
   });
 });
 

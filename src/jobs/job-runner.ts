@@ -82,8 +82,10 @@ const allowedJobErrorCodes = new Set([
   "timeout",
   "validation_error",
   "authentication_error",
+  "capacity_review_required",
+  "capacity_hard_limit",
 ]);
-const neverRetryCodes = new Set(["validation_error", "authentication_error"]);
+const neverRetryCodes = new Set(["validation_error", "authentication_error", "capacity_review_required", "capacity_hard_limit"]);
 const allowedItemErrorCodes = new Set([
   "rate_limit",
   "source_unavailable",
