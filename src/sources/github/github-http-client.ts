@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { GitHubSourceError, type GitHubRepository, type GitHubSearchPage, type GitHubSource, type SearchSlice } from "./github-source.js";
+import { GitHubSourceError, type GitHubRepository, type GitHubSearchPage, type GitHubSourceFactory, type GitHubSourceOperation, type SearchSlice } from "./github-source.js";
 import { githubRateLimitSchema, githubRepositorySchema, githubSearchResponseSchema, mapGitHubRepository } from "./schemas.js";
 import { RequestBudget } from "./request-budget.js";
 
@@ -16,9 +16,14 @@ export interface GitHubHttpClientOptions {
   maxWaitMs?: number;
 }
 
+export class GitHubHttpClientFactory implements GitHubSourceFactory {
+  public constructor(private readonly options: GitHubHttpClientOptions) {}
+  public openOperation(): GitHubSourceOperation { return new GitHubHttpClient(this.options); }
+}
+
 const fullNamePattern = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 
-export class GitHubHttpClient implements GitHubSource {
+export class GitHubHttpClient implements GitHubSourceOperation {
   private readonly fetcher: Fetcher;
   private readonly now: () => Date;
   private readonly sleep: (milliseconds: number) => Promise<void>;
@@ -35,14 +40,15 @@ export class GitHubHttpClient implements GitHubSource {
     this.sleep = options.sleep ?? (async (milliseconds) => await new Promise((resolve) => setTimeout(resolve, milliseconds)));
     this.timeoutMs = options.timeoutMs ?? 15_000;
     this.maxBodyBytes = options.maxBodyBytes ?? 2_000_000;
-    for (const [value, minimum] of [[this.timeoutMs, 1], [this.maxBodyBytes, 1], [options.maxRequests ?? 300, 1], [options.maxWaitMs ?? 60_000, 0]] as const) {
+    for (const [value, minimum] of [[this.timeoutMs, 1], [this.maxBodyBytes, 1], [options.maxRequests ?? 4_500, 1], [options.maxWaitMs ?? 60_000, 0]] as const) {
       if (!Number.isSafeInteger(value) || value < minimum) throw new GitHubSourceError("invalid_client_options");
     }
-    this.budget = new RequestBudget(options.maxRequests ?? 300, options.maxWaitMs ?? 60_000);
+    this.budget = new RequestBudget(options.maxRequests ?? 4_500, options.maxWaitMs ?? 60_000);
   }
 
+  public close(): void { /* no persistent transport resources */ }
+
   public async getRateLimit(): Promise<{ remaining: number; resetAt: Date }> {
-    this.budget.reset();
     this.pendingResetAt = null;
     let { data } = await this.request("/rate_limit", githubRateLimitSchema);
     if (data.resources.search.remaining === 0) {
@@ -88,7 +94,7 @@ export class GitHubHttpClient implements GitHubSource {
         error instanceof Error && error.message === "private_repository" ? "not_found" : "repository_invalid";
       throw new GitHubSourceError(code);
     }
-    return data.description?.trim() ? repository : { ...repository, hasReadme: await this.hasReadme(fullName) };
+    return { ...repository, hasReadme: await this.hasReadme(fullName) };
   }
 
   public async hasReadme(fullName: string): Promise<boolean> {
@@ -128,6 +134,15 @@ export class GitHubHttpClient implements GitHubSource {
         clearTimeout(timer);
         throw new GitHubSourceError(controller.signal.aborted ? "timeout" : "network_error");
       }
+      if (response.status === 403 && !shouldRetryRateLimit(response)) {
+        let secondary: boolean;
+        try { secondary = await isHeaderlessSecondaryLimit(response, this.maxBodyBytes, controller.signal); }
+        finally { clearTimeout(timer); }
+        if (!secondary) throw new GitHubSourceError("authentication_error");
+        if (attempt === 1) throw new GitHubSourceError("rate_limit");
+        await this.waitMilliseconds(60_000);
+        continue;
+      }
       if (shouldRetryRateLimit(response)) {
         clearTimeout(timer);
         await cancelBody(response);
@@ -159,7 +174,7 @@ export class GitHubHttpClient implements GitHubSource {
     await this.waitMilliseconds(Math.max(0, raw));
   }
   private async waitMilliseconds(milliseconds: number): Promise<void> {
-    try { this.budget.allowWait(milliseconds); } catch { throw new GitHubSourceError("rate_limit_budget_exceeded"); }
+    this.budget.allowWait(milliseconds);
     await this.sleep(milliseconds);
   }
 }
@@ -205,7 +220,7 @@ function rateLimitWaitMs(headers: Headers, now: Date): number {
     if (Number.isFinite(absolute)) return Math.max(0, absolute - now.getTime());
   }
   const reset = Number(headers.get("x-ratelimit-reset"));
-  if (Number.isFinite(reset) && reset > 0) return Math.max(0, reset * 1_000 - now.getTime());
+  if (Number.isFinite(reset) && reset > 0) return Math.max(0, reset * 1_000 + 1_000 - now.getTime());
   if (headers.get("x-rateLimit-resource")?.toLowerCase() === "search") return 60_000;
   if (!headers.has("retry-after") && !headers.has("x-ratelimit-reset")) return 60_000;
   throw new GitHubSourceError("rate_limit_reset_invalid");
@@ -222,9 +237,11 @@ async function readBoundedJson(response: Response, maxBytes: number, signal: Abo
   if (!reader) throw new GitHubSourceError("response_invalid");
   const chunks: Uint8Array[] = [];
   let total = 0;
+  let chunkCount = 0;
   while (true) {
     const { done, value } = await abortableRead(reader, signal);
     if (done) break;
+    if (++chunkCount > 4_096) { await reader.cancel(); throw new GitHubSourceError("response_too_fragmented"); }
     total += value.byteLength;
     if (total > maxBytes) { await reader.cancel(); throw new GitHubSourceError("response_too_large"); }
     chunks.push(value);
@@ -262,3 +279,16 @@ function parseResetHeader(headers: Headers): Date {
   return new Date(seconds * 1_000);
 }
 async function cancelBody(response: Response): Promise<void> { try { await response.body?.cancel(); } catch { /* ignore */ } }
+
+async function isHeaderlessSecondaryLimit(response: Response, maxBodyBytes: number, signal: AbortSignal): Promise<boolean> {
+  let body: unknown;
+  try { body = await readBoundedJson(response, Math.min(maxBodyBytes, 32_768), signal); }
+  catch (error) {
+    if (error instanceof GitHubSourceError && error.code === "response_invalid") return false;
+    throw error;
+  }
+  const parsed = z.object({ message: z.string().max(1_000) }).passthrough().safeParse(body);
+  if (!parsed.success) return false;
+  const message = parsed.data.message.toLowerCase();
+  return message.includes("secondary rate limit") || message.includes("abuse detection");
+}

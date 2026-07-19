@@ -53,6 +53,14 @@ export interface GitHubSource {
   hasReadme(fullName: string): Promise<boolean>;
 }
 
+export interface GitHubSourceOperation extends GitHubSource {
+  close(): void | Promise<void>;
+}
+
+export interface GitHubSourceFactory {
+  openOperation(): GitHubSourceOperation | Promise<GitHubSourceOperation>;
+}
+
 export class GitHubSourceError extends Error {
   public constructor(public readonly code: string) {
     super(code);

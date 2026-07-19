@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { GitHubHttpClient } from "../../../../src/sources/github/github-http-client.js";
+import { GitHubHttpClient, GitHubHttpClientFactory } from "../../../../src/sources/github/github-http-client.js";
 
 const validRepo = {
   id: 1, node_id: "R_1", name: "repo", full_name: "owner/repo", private: false,
@@ -135,8 +135,8 @@ describe("GitHubHttpClient", () => {
     }
     let calls = 0;
     const detailed = new GitHubHttpClient({ token: "t", fetcher: async () => { calls += 1; return response(validRepo); } });
-    expect((await detailed.getRepository("owner/repo")).hasReadme).toBe(false);
-    expect(calls).toBe(1);
+    expect((await detailed.getRepository("owner/repo")).hasReadme).toBe(true);
+    expect(calls).toBe(2);
   });
 
   it("waits for a zero search budget with safety margin and resets per operation", async () => {
@@ -165,6 +165,19 @@ describe("GitHubHttpClient", () => {
     }
   });
 
+  it("adds one second safety when a primary-limit 403 supplies reset headers", async () => {
+    let calls = 0;
+    const sleep = vi.fn(async () => undefined);
+    const client = new GitHubHttpClient({ token: "t", sleep, now: () => new Date(1_000), maxWaitMs: 5_000, fetcher: async () => {
+      calls += 1;
+      return calls === 1
+        ? new Response("secret", { status: 403, headers: { "X-RateLimit-Remaining": "0", "X-RateLimit-Reset": "2" } })
+        : response({ resources: { search: { remaining: 30, reset: 2 } } });
+    }});
+    expect((await client.getRateLimit()).remaining).toBe(30);
+    expect(sleep).toHaveBeenCalledWith(2_000);
+  });
+
   it("rejects invalid reset and unsafe numeric options", async () => {
     const invalidReset = new GitHubHttpClient({ token: "t", fetcher: async () => response({ resources: { search: { remaining: 0, reset: 0 } } }) });
     await expect(invalidReset.getRateLimit()).rejects.toThrow(/rate_limit_reset_invalid/);
@@ -191,8 +204,40 @@ describe("GitHubHttpClient", () => {
     await expect(client.getRateLimit()).rejects.toThrow(/timeout/);
     expect(cancelled).toBe(true);
   });
+
+  it("creates operations with independent request budgets", async () => {
+    const factory = new GitHubHttpClientFactory({ token: "t", maxRequests: 3, fetcher: async (input) => {
+      const path = new URL(String(input)).pathname;
+      if (path === "/rate_limit") return response({ resources: { search: { remaining: 30, reset: 2_000_000_000 } } });
+      if (path.endsWith("/readme")) return response({ name: "README.md" });
+      return response(validRepo);
+    }});
+    for (let index = 0; index < 2; index += 1) {
+      const operation = await factory.openOperation();
+      await operation.getRateLimit();
+      expect((await operation.getRepository("owner/repo")).hasReadme).toBe(true);
+      await operation.close();
+    }
+  });
+
+  it("recognizes headerless official secondary-limit 403 but not an ordinary 403", async () => {
+    const sleep = vi.fn(async () => undefined);
+    let calls = 0;
+    const secondary = new GitHubHttpClient({ token: "t", sleep, maxWaitMs: 60_000, fetcher: async () => {
+      calls += 1;
+      return calls === 1
+        ? response({ message: "You have exceeded a secondary rate limit. Please wait a few minutes." }, {}, 403)
+        : response({ resources: { search: { remaining: 30, reset: 2_000_000_000 } } });
+    }});
+    expect((await secondary.getRateLimit()).remaining).toBe(30);
+    expect(sleep).toHaveBeenCalledWith(60_000);
+    const ordinarySleep = vi.fn(async () => undefined);
+    const ordinary = new GitHubHttpClient({ token: "t", sleep: ordinarySleep, fetcher: async () => response({ message: "Resource not accessible" }, {}, 403) });
+    await expect(ordinary.getRateLimit()).rejects.toThrow(/authentication_error/);
+    expect(ordinarySleep).not.toHaveBeenCalled();
+  });
 });
 
-function response(body: unknown, headers: Record<string, string> = {}): Response {
-  return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json", ...headers } });
+function response(body: unknown, headers: Record<string, string> = {}, status = 200): Response {
+  return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json", ...headers } });
 }

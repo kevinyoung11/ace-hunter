@@ -815,6 +815,8 @@ export interface GitHubSource {
   searchRepositories(slice: SearchSlice, page: number): Promise<GitHubSearchPage>;
   getRepository(fullName: string): Promise<GitHubRepository>;
 }
+export interface GitHubSourceOperation extends GitHubSource { close(): void | Promise<void>; }
+export interface GitHubSourceFactory { openOperation(): GitHubSourceOperation | Promise<GitHubSourceOperation>; }
 ```
 
 ```ts
@@ -852,7 +854,7 @@ export async function searchCompletely(source: GitHubSource, initial: SearchSlic
 }
 ```
 
-`github-http-client.ts` builds `created:from..to stars:min..max is:public archived:false mirror:false`. It does not send the undocumented `fork:false`: GitHub Search excludes forks by default unless `fork:true` or `fork:only` is supplied, and response facts are checked again. It sends `Accept: application/vnd.github+json` and `Authorization: Bearer`, validates each response with Zod, checks `/rate_limit` before search, and follows bounded reset/Retry-After handling for primary and secondary limits. The token and response body never appear in an Error.
+`github-http-client.ts` builds `created:from..to stars:min..max is:public archived:false mirror:false`. It does not send the undocumented `fork:false`: GitHub Search excludes forks by default unless `fork:true` or `fork:only` is supplied, and response facts are checked again. `GitHubSourceFactory.openOperation()` creates an independent budget/preflight/rate-limit state for each Job execution, which the Job closes in `finally`; the 4,500-request default covers Search plus up to 1,000 Detail/README pairs without weakening actual GitHub header limits. Every Detail request performs exactly one README request so the non-null database boolean is evidence-backed. The adapter sends required headers, validates with Zod, and follows bounded primary/secondary reset handling, including a size/time/chunk-bounded parse of only GitHub's official secondary-limit message. Token and response body never appear in an Error.
 
 - [ ] **Step 4: Write the failing discovery integration test**
 
@@ -937,7 +939,7 @@ async function persistProductFromRepo(client: PoolClient, repo: GitHubRepository
 }
 ```
 
-`discover-github-candidates.ts` executes the three rule searches, refreshes every hit through the detail endpoint, rejects forks/archives/mirrors/inaccessible repositories and repositories missing both a nonblank description and README, then calls the public `createProductFromRepo(pool,...)` API. That API owns BEGIN/COMMIT/ROLLBACK and exposes only a controlled `afterPersist` callback so the Product, Repo, Primary link, and first hourly Snapshot are atomic. It fixes lock order as global capacity then 64-bit `github_repo_id`. Capacity counts every tracked repository row regardless of status: new count 800+ emits a sanitized post-commit warning; old count 950+ requires a recorded nonempty review id; old count 1000 always rejects new rows. Existing rows may refresh/reactivate and repair links at every threshold without increasing the count.
+`discover-github-candidates.ts` executes the three rule searches, refreshes every hit through the detail endpoint, rejects forks/archives/mirrors/inaccessible repositories and repositories missing both a nonblank description and README, then calls the public `createProductFromRepo(pool,...)` API. That API owns BEGIN/COMMIT/ROLLBACK and exposes only a controlled `afterPersist` callback so the Product, Repo, Primary link, first hourly Snapshot, and capacity evidence are atomic. It fixes lock order as global capacity then 64-bit `github_repo_id`. Capacity counts every tracked repository row regardless of status: new count 800+ stores `capacity_status`, `tracked_count`, and `capacity_warning` in Snapshot; the post-commit structured log is best-effort and is neither a notification nor an outbox. Old count 950+ requires a recorded nonempty review id; old count 1000 always rejects new rows. Existing rows may refresh/reactivate and repair links at every threshold without increasing the count.
 
 - [ ] **Step 6: Run GREEN GitHub discovery checks**
 
