@@ -15,6 +15,9 @@ source "$config_file"
 for name in NODE_PATH TWITTER_CLI_PATH KEYCHAIN_HELPER RELEASE_ROOT; do
   [[ -n "${!name:-}" && "${!name}" = /* ]] || fail configuration_error
 done
+for name in HTTP_PROXY HTTPS_PROXY NO_PROXY ALL_PROXY http_proxy https_proxy no_proxy all_proxy SSL_CERT_FILE SSL_CERT_DIR; do
+  [[ -n "${!name:-}" ]] && export "$name"
+done
 
 mkdir -p "${app_dir}/run"
 acquire_lock() {

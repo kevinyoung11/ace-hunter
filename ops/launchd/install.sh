@@ -72,12 +72,16 @@ rmdir "$helper_build_dir"
 helper_build_dir=""
 
 config_tmp="${app_dir}/.scheduler.conf.$$"
-quoted() { "$node_path" -e 'process.stdout.write(JSON.stringify(process.argv[1]))' "$1"; }
+quoted() { printf '%q' "$1"; }
+proxy_names=(HTTP_PROXY HTTPS_PROXY NO_PROXY ALL_PROXY http_proxy https_proxy no_proxy all_proxy SSL_CERT_FILE SSL_CERT_DIR)
 {
   printf 'NODE_PATH=%s\n' "$(quoted "$node_path")"
   printf 'TWITTER_CLI_PATH=%s\n' "$(quoted "$twitter_path")"
   printf 'KEYCHAIN_HELPER=%s\n' "$(quoted "${bin_dir}/keychain-secret")"
   printf 'RELEASE_ROOT=%s\n' "$(quoted "$release_root")"
+  for name in "${proxy_names[@]}"; do
+    [[ -n "${!name:-}" ]] && printf '%s=%s\n' "$name" "$(quoted "${!name}")"
+  done
 } >"$config_tmp"
 chmod 600 "$config_tmp"
 mv -f "$config_tmp" "${app_dir}/scheduler.conf"

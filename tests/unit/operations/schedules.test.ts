@@ -110,6 +110,20 @@ it("runs every quality gate against PostgreSQL 14 in CI", async () => {
   }
 });
 
+it("persists only the network proxy whitelist in the owner-only scheduler config", async () => {
+  const installer = await readFile("ops/launchd/install.sh", "utf8");
+  const proxyNames = [
+    "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "ALL_PROXY",
+    "http_proxy", "https_proxy", "no_proxy", "all_proxy",
+    "SSL_CERT_FILE", "SSL_CERT_DIR",
+  ];
+  for (const name of proxyNames) expect(installer).toContain(name);
+  expect(installer).toContain('[[ -n "${!name:-}" ]]');
+  expect(installer).toContain('printf \'%s=%s\\n\' "$name" "$(quoted "${!name}")"');
+  expect(installer).toContain('chmod 600 "$config_tmp"');
+  expect(installer).not.toMatch(/\b(?:env|printenv)\b[^\n]*scheduler\.conf/u);
+});
+
 describe("portable Skill validator", () => {
   it("validates the checked-in Skill without Python dependencies", async () => {
     await expect(execFileAsync(process.execPath, [
