@@ -14,14 +14,22 @@ if test "${#main_sha}" -ne 40 || [[ "$main_sha" == *[!0-9a-f]* ]]; then
   exit 64
 fi
 
-for required_command in curl gh git mktemp node realpath sed shasum tar; do
+for required_command in curl gh mktemp node realpath sed shasum tar; do
   command -v "$required_command" >/dev/null || {
     echo "required command unavailable: $required_command" >&2
     exit 69
   }
 done
 
-repo_root=$(git rev-parse --show-toplevel)
+script_dir=$(cd "$(dirname "$0")" && pwd -P)
+repo_root=$(cd "$script_dir/../.." && pwd -P)
+manifest="$repo_root/release-manifest.json"
+test -f "$manifest" && test ! -L "$manifest" || { echo "release manifest missing" >&2; exit 65; }
+manifest_sha=$(node -e 'const fs=require("node:fs");const value=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));if(typeof value.sha!=="string")process.exit(1);process.stdout.write(value.sha)' "$manifest") || {
+  echo "release manifest is malformed" >&2
+  exit 65
+}
+test "$manifest_sha" = "$main_sha" || { echo "release manifest SHA mismatch" >&2; exit 65; }
 lock_file="$repo_root/ops/self-hosted-runner/actions-runner.lock"
 test -f "$lock_file" || { echo "runner lock missing" >&2; exit 65; }
 test "$(awk 'END { print NR }' "$lock_file")" = "2" || {
