@@ -1,0 +1,35 @@
+name: generate daily report
+
+on:
+  schedule: [{ cron: '30 0 * * *' }]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ace-hunter-daily-report
+  cancel-in-progress: false
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    environment: ace-hunter-production
+    timeout-minutes: 20
+    env:
+      ACE_HUNTER_RUNTIME_DATABASE_URL: ${{ secrets.ACE_HUNTER_RUNTIME_DATABASE_URL }}
+      ACE_HUNTER_GITHUB_TOKEN: ${{ secrets.ACE_HUNTER_GITHUB_TOKEN }}
+      ACE_HUNTER_USER_ID: ${{ secrets.ACE_HUNTER_USER_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: >-
+          node dist/src/cli/index.js job generate_report --cutoff-hour-utc 0
+          --orchestrator-run-id '${{ github.run_id }}'
+          --orchestrator-run-attempt '${{ github.run_attempt }}'
+          --orchestrator-workflow 'daily-report.yml'

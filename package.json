@@ -1,0 +1,48 @@
+{
+  "name": "ace-hunter",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22 <23"
+  },
+  "bin": {
+    "ace-hunter": "dist/src/cli/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest",
+    "test:run": "vitest --run",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint .",
+    "start": "node dist/src/cli/index.js",
+    "dev": "node --import tsx src/cli/index.ts",
+    "db:migrate": "node --import tsx src/db/migrate.ts",
+    "skill:validate": "node scripts/validate-skill.mjs skills/ace-hunter",
+    "job:retention": "node dist/src/cli/index.js job retention",
+    "e2e:live": "node --import tsx scripts/live-e2e.ts",
+    "smoke:github": "node --import tsx scripts/live-github-smoke.ts",
+    "smoke:x": "node --import tsx scripts/live-x-smoke.ts",
+    "safety:schema": "node --import tsx scripts/supabase-safety-check.ts",
+    "safety:runtime": "node --import tsx scripts/runtime-permission-check.ts",
+    "acceptance:local": "bash scripts/run-local-live-acceptance.sh"
+  },
+  "dependencies": {
+    "cheerio": "^1.1.0",
+    "commander": "^14.0.0",
+    "dotenv": "^17.0.0",
+    "pg": "^8.16.0",
+    "undici": "^7.28.0",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.0.0",
+    "@types/node": "^22.0.0",
+    "@types/pg": "^8.15.0",
+    "eslint": "^9.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.8.0",
+    "typescript-eslint": "^8.0.0",
+    "vitest": "^3.0.0"
+  }
+}

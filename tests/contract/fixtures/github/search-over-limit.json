@@ -1,0 +1,17 @@
+{
+  "scenario": "single-second-search-density-requires-star-partitioning",
+  "slice": {
+    "from": "2026-07-01T00:00:00Z",
+    "to": "2026-07-01T00:00:00Z",
+    "min_stars": 10
+  },
+  "first_page": {
+    "total_count": 1001,
+    "incomplete_results": false,
+    "maximum_stars_from_desc_first_item": 15
+  },
+  "expected_star_slices": [
+    { "min": 10, "max": 12 },
+    { "min": 13, "max": 15 }
+  ]
+}

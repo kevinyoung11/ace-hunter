@@ -1,0 +1,45 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  verify:
+    permissions:
+      contents: read
+    timeout-minutes: 20
+    concurrency:
+      group: ci-${{ github.ref }}
+      cancel-in-progress: true
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:14
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: ace_hunter_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      ACE_TEST_ADMIN_DATABASE_URL: postgres://postgres:postgres@localhost:5432/ace_hunter_test
+      ACE_TEST_MIGRATION_DATABASE_URL: postgres://ace_hunter_migrator:test-migrator@localhost:5432/ace_hunter_test
+      ACE_TEST_RUNTIME_DATABASE_URL: postgres://ace_hunter_runtime:test-runtime@localhost:5432/ace_hunter_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: psql "$ACE_TEST_ADMIN_DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/helpers/bootstrap-test-db.sql && psql "$ACE_TEST_ADMIN_DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/helpers/bootstrap-test-db.sql
+      - run: echo "ACE_HUNTER_MIGRATION_SHA256=$(shasum -a 256 src/db/migrations/0001_ace_hunter_initial.sql | cut -d' ' -f1)" >> "$GITHUB_ENV"
+      - run: ACE_HUNTER_MIGRATION_DATABASE_URL="$ACE_TEST_MIGRATION_DATABASE_URL" npm run db:migrate
+      - run: psql "$ACE_TEST_ADMIN_DATABASE_URL" -v ON_ERROR_STOP=1 -c "alter role ace_hunter_runtime login password 'test-runtime';"
+      - run: ACE_TEST_DATABASE_URL="$ACE_TEST_RUNTIME_DATABASE_URL" ACE_TEST_ADMIN_DATABASE_URL="$ACE_TEST_ADMIN_DATABASE_URL" ACE_TEST_MIGRATION_DATABASE_URL="$ACE_TEST_MIGRATION_DATABASE_URL" npm test -- --run
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run build
+      - run: node scripts/validate-skill.mjs skills/ace-hunter
