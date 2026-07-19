@@ -27,7 +27,7 @@ if [[ ! -d "$candidate" ]]; then
 fi
 node_path="$(command -v node)"
 node_path="$(realpath "$node_path")"
-ACE_HUNTER_ENV_FILE="$live_env" "$node_path" "${candidate}/dist/src/cli/index.js" list --format json >/dev/null
+ACE_HUNTER_ENV_FILE="$live_env" "$node_path" "${candidate}/dist/src/cli/index.js" list >/dev/null
 "$node_path" "${candidate}/scripts/validate-skill.mjs" "${candidate}/skills/ace-hunter" >/dev/null
 
 current="${app_dir}/current"
@@ -82,7 +82,7 @@ chmod 755 "$wrapper_tmp"
 atomic_replace "$wrapper_tmp" "$wrapper"
 ln -s "${current}/skills/ace-hunter" "${skill_link}.new.$$"
 atomic_replace "${skill_link}.new.$$" "$skill_link"
-ACE_HUNTER_ENV_FILE="$live_env" "$wrapper" list --format json >/dev/null
+ACE_HUNTER_ENV_FILE="$live_env" "$wrapper" list >/dev/null
 "$node_path" "${current}/scripts/validate-skill.mjs" "$skill_link" >/dev/null
 trap - ERR HUP INT TERM
 trap cleanup_transaction EXIT
