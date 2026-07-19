@@ -34,7 +34,9 @@ export class GitHubHttpClient implements GitHubSourceOperation {
   private pendingResetAt: Date | null = null;
 
   public constructor(private readonly options: GitHubHttpClientOptions) {
-    if (!options.token || options.token.length > 1_024 || /[\r\n]/.test(options.token)) throw new GitHubSourceError("authentication_error");
+    if (!options.token || options.token.length > 1_024 || options.token !== options.token.trim() || hasAsciiOrC1Control(options.token)) {
+      throw new GitHubSourceError("authentication_error");
+    }
     this.fetcher = options.fetcher ?? fetch;
     this.now = options.now ?? (() => new Date());
     this.sleep = options.sleep ?? (async (milliseconds) => await new Promise((resolve) => setTimeout(resolve, milliseconds)));
@@ -161,8 +163,7 @@ export class GitHubHttpClient implements GitHubSourceOperation {
       } finally { clearTimeout(timer); }
       const parsed = schema.safeParse(body);
       if (!parsed.success) throw new GitHubSourceError("response_invalid");
-      const remaining = response.headers.get("x-ratelimit-remaining");
-      if (remaining === "0" && url.pathname.startsWith("/search/")) this.pendingResetAt = parseResetHeader(response.headers);
+      if (url.pathname !== "/rate_limit") this.captureExhaustedResource(response.headers);
       return { data: parsed.data, headers: response.headers };
     }
     throw new GitHubSourceError("source_unavailable");
@@ -176,6 +177,13 @@ export class GitHubHttpClient implements GitHubSourceOperation {
   private async waitMilliseconds(milliseconds: number): Promise<void> {
     this.budget.allowWait(milliseconds);
     await this.sleep(milliseconds);
+  }
+  private captureExhaustedResource(headers: Headers): void {
+    const remaining = headers.get("x-ratelimit-remaining");
+    if (remaining === null || Number(remaining) !== 0) return;
+    const resource = headers.get("x-ratelimit-resource")?.toLowerCase();
+    if (resource !== "search" && resource !== "core") throw new GitHubSourceError("rate_limit_resource_invalid");
+    this.pendingResetAt = parseResetHeader(headers);
   }
 }
 
@@ -291,4 +299,11 @@ async function isHeaderlessSecondaryLimit(response: Response, maxBodyBytes: numb
   if (!parsed.success) return false;
   const message = parsed.data.message.toLowerCase();
   return message.includes("secondary rate limit") || message.includes("abuse detection");
+}
+
+function hasAsciiOrC1Control(value: string): boolean {
+  return [...value].some((character) => {
+    const code = character.codePointAt(0)!;
+    return code <= 0x1f || code >= 0x7f && code <= 0x9f;
+  });
 }

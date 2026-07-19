@@ -176,6 +176,23 @@ it("preserves nonretryable authentication errors from preflight", async () => {
   expect(closed).toBe(true);
 });
 
+it("sanitizes operation open and close failures without overriding a primary error", async () => {
+  const base = { pool: runtimePool, emitOperationalEvent: () => undefined };
+  await expect(discoverGithubCandidates({ ...base, sourceFactory: { openOperation: async () => { throw new GitHubSourceError("authentication_error"); } } }, new Date("2026-07-19T00:00:00Z")))
+    .rejects.toMatchObject({ code: "authentication_error", retryable: false });
+
+  const successThenClose = fakeSource([]);
+  successThenClose.close = () => { throw new Error("close secret"); };
+  await expect(discoverGithubCandidates({ ...base, sourceFactory: factoryFrom(successThenClose) }, new Date("2026-07-19T00:00:00Z")))
+    .rejects.toMatchObject({ code: "source_unavailable", retryable: true, safeMessage: "github operation close failed" });
+
+  const primaryThenClose = fakeSource([]);
+  primaryThenClose.getRateLimit = async () => { throw new GitHubSourceError("authentication_error"); };
+  primaryThenClose.close = () => { throw new Error("close secret"); };
+  await expect(discoverGithubCandidates({ ...base, sourceFactory: factoryFrom(primaryThenClose) }, new Date("2026-07-19T00:00:00Z")))
+    .rejects.toMatchObject({ code: "authentication_error", retryable: false });
+});
+
 it("stops enrichment immediately when the operation request budget is exhausted", async () => {
   const source = fakeSource([githubRepo({ githubRepoId: 915_001 })]);
   source.getRepository = async () => { throw new GitHubSourceError("request_budget_exceeded"); };

@@ -86,7 +86,7 @@ describe("GitHubHttpClient", () => {
       if (url.pathname === "/rate_limit") return response({ resources: { search: { remaining: 30, reset: 2 } } });
       if (url.searchParams.get("page") === "1") return response({ total_count: 2, incomplete_results: false, items: [validRepo] }, {
         Link: '<https://api.github.com/search/repositories?q=x&page=2>; rel="next"',
-        "X-RateLimit-Remaining": "0", "X-RateLimit-Reset": "2",
+        "X-RateLimit-Resource": "search", "X-RateLimit-Remaining": "0", "X-RateLimit-Reset": "2",
       });
       return response({ total_count: 2, incomplete_results: false, items: [{ ...validRepo, id: 2, node_id: "R_2", name: "repo2", full_name: "owner/repo2", html_url: "https://github.com/owner/repo2" }] });
     });
@@ -218,6 +218,37 @@ describe("GitHubHttpClient", () => {
       expect((await operation.getRepository("owner/repo")).hasReadme).toBe(true);
       await operation.close();
     }
+  });
+
+  it("waits between detail, README, and the next repo when core reaches zero", async () => {
+    const sleep = vi.fn(async () => undefined);
+    let calls = 0;
+    const client = new GitHubHttpClient({ token: "t", sleep, now: () => new Date(1_000), maxWaitMs: 10_000, fetcher: async (input) => {
+      calls += 1;
+      const path = new URL(String(input)).pathname;
+      if (path.endsWith("/readme")) return response({ name: "README.md" }, {
+        "X-RateLimit-Resource": "core", "X-RateLimit-Remaining": "0", "X-RateLimit-Reset": "4",
+      });
+      return response({ ...validRepo, full_name: path.includes("repo2") ? "owner/repo2" : "owner/repo", name: path.includes("repo2") ? "repo2" : "repo", html_url: path.includes("repo2") ? "https://github.com/owner/repo2" : "https://github.com/owner/repo" }, calls === 1 ? {
+        "X-RateLimit-Resource": "core", "X-RateLimit-Remaining": "0", "X-RateLimit-Reset": "2",
+      } : {});
+    }});
+    await client.getRepository("owner/repo");
+    await client.getRepository("owner/repo2");
+    expect(sleep.mock.calls).toEqual([[2_000], [4_000]]);
+  });
+
+  it.each([
+    { "X-RateLimit-Remaining": "0", "X-RateLimit-Reset": "2" },
+    { "X-RateLimit-Resource": "graphql", "X-RateLimit-Remaining": "0", "X-RateLimit-Reset": "2" },
+    { "X-RateLimit-Resource": "core", "X-RateLimit-Remaining": "0", "X-RateLimit-Reset": "invalid" },
+  ])("fails closed for malformed exhausted response headers %#", async (headers) => {
+    const client = new GitHubHttpClient({ token: "t", fetcher: async () => response(validRepo, headers as Record<string, string>) });
+    await expect(client.getRepository("owner/repo")).rejects.toThrow(/rate_limit_(?:resource|reset)_invalid/);
+  });
+
+  it.each([" token", "token ", "tok\u0000en", "tok\u001fen", "tok\u007fen", "tok\u0085en"])("rejects unsafe token characters", (token) => {
+    expect(() => new GitHubHttpClient({ token })).toThrow(/authentication_error/);
   });
 
   it("recognizes headerless official secondary-limit 403 but not an ordinary 403", async () => {

@@ -22,9 +22,19 @@ export async function discoverGithubCandidates(
   at: Date,
   options: DiscoverGithubOptions = {},
 ): Promise<JobResult> {
-  const source = await dependencies.sourceFactory.openOperation();
-  try { return await discoverWithOperation(dependencies, source, at, options); }
-  finally { await source.close(); }
+  let source;
+  try { source = await dependencies.sourceFactory.openOperation(); }
+  catch (error) { throw toJobError(error); }
+  let result: JobResult | undefined;
+  let primaryError: unknown;
+  try { result = await discoverWithOperation(dependencies, source, at, options); }
+  catch (error) { primaryError = error; }
+  try { await source.close(); }
+  catch {
+    if (primaryError === undefined) throw new JobError("source_unavailable", true, "github operation close failed");
+  }
+  if (primaryError !== undefined) throw primaryError;
+  return result!;
 }
 
 async function discoverWithOperation(
