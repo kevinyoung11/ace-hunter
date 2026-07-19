@@ -48,7 +48,7 @@ it("executes stored report, analysis, and monitor commands against the runtime d
     dataCutoffAt: "2026-07-19T00:00:00.000Z",
   });
   expect((await invoke(["analyze", "owner/runtime-repo", "--format", "json"])).exitCodes).toEqual([]);
-  expect((await runtimePool.query("select count(*)::int n from ace_hunter.analysis_outputs where output_type='product_analysis'")).rows[0].n).toBe(1);
+  expect((await runtimePool.query("select count(*)::int n from ace_hunter.analysis_outputs where output_type='product_analysis' and user_id=$1", [userId])).rows[0].n).toBe(1);
 
   expect((await invoke(["follow", "owner/runtime-repo"])).exitCodes).toEqual([]);
   expect((await invoke(["follow", "owner/runtime-repo"])).exitCodes).toEqual([]);

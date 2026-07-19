@@ -1804,7 +1804,7 @@ git commit -m "feat: expose ace hunter workflows as a codex skill"
 - Test: `tests/integration/jobs/evaluate-success.test.ts`
 - Modify: `package.json`
 
-- [ ] **Step 1: Write failing schedule and repository-capacity tests**
+- [x] **Step 1: Write failing schedule and repository-capacity tests**
 
 ```ts
 // tests/unit/operations/schedules.test.ts
@@ -1880,13 +1880,13 @@ it("warns at 800 and requires lifecycle review before 1000", () => {
 });
 ```
 
-- [ ] **Step 2: Run the RED operations tests**
+- [x] **Step 2: Run the RED operations tests**
 
 Run: `npm test -- --run tests/unit/operations/schedules.test.ts tests/integration/operations/repository-limit.test.ts tests/integration/jobs/evaluate-success.test.ts`
 
 Expected: FAIL because workflow files, `repositoryCapacityStatus`, and `evaluate-success.ts` do not exist.
 
-- [ ] **Step 3: Add the capacity gate and exact UTC schedules**
+- [x] **Step 3: Add the capacity gate and exact UTC schedules**
 
 ```ts
 // addition to src/jobs/retention.ts
@@ -1942,7 +1942,7 @@ The deployer resolves the real Codex home as `${CODEX_HOME:-$HOME/.codex}` and a
 
 `install.sh` accepts only this resolved release/current path. At install time it resolves the exact Node and Twitter CLI binaries with `command -v` plus `realpath`, requires regular executable files owned by either root or the current UID and not group/world-writable, executes Node `--version` and the production Twitter preflight, and writes their non-secret absolute paths to a root/current-user-owned `0600` scheduler config. The Plist's `ProgramArguments[0]` is the immutable release wrapper absolute path; the wrapper invokes the recorded absolute Node path and sets `TWITTER_CLI_PATH` to the recorded absolute Twitter binary, never relying on interactive `PATH`, `npm`, or `npm link`. The installer compiles the Keychain helper, renders no secrets into the Plist, installs into the current user's `gui/$UID` domain, and uses `bootout`/`bootstrap` idempotently. Acceptance asserts the Plist and config owners/modes, both binary realpaths, and that the ProgramArguments realpath contains the captured Main SHA and remains valid after the feature worktree is removed. The runbook assigns the local Mac/user as owner, documents login/uptime and sleep limitations, failed-run recovery, Keychain item rotation/revocation, Twitter session renewal, atomic Main upgrades/rollback to the prior immutable release, old-release cleanup, log inspection, and uninstall.
 
-- [ ] **Step 4: Add PostgreSQL 14 CI with all quality gates**
+- [x] **Step 4: Add PostgreSQL 14 CI with all quality gates**
 
 ```yaml
 # .github/workflows/ci.yml
@@ -2011,7 +2011,7 @@ process.stdout.write(`validated ${name}\n`);
 
 Add `test:run`, `skill:validate`, `job:retention`, and `e2e:live` scripts to `package.json`. Local Task 10 continues to use Skill Creator's authoritative `quick_validate.py`; this portable check ensures CI cannot silently skip validation.
 
-- [ ] **Step 5: Verify workflow behavior and retention tests GREEN**
+- [x] **Step 5: Verify workflow behavior and retention tests GREEN**
 
 Run:
 
@@ -2025,7 +2025,7 @@ npm run build
 
 Expected: schedule, dispatch, least permissions, timeout, concurrency, UTC cutoff, secret-name, disposable-role bootstrap, 800/950/1000 boundary, 90-day compaction, daily-preservation-before-delete, closed-cohort Precision@10/baseline/Lead Time evaluation, and Skill validation tests PASS; build outputs `dist/src/cli/index.js`.
 
-- [ ] **Step 6: Commit Task 11**
+- [x] **Step 6: Commit Task 11**
 
 ```bash
 git add .github/workflows ops/launchd scripts/validate-skill.mjs scripts/run-scheduled-x.sh src/jobs/retention.ts src/jobs/evaluate-success.ts tests/unit/operations tests/integration/operations package.json package-lock.json

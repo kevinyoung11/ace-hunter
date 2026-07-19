@@ -12,11 +12,15 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "vitest",
+    "test:run": "vitest --run",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint .",
     "start": "node dist/src/cli/index.js",
     "dev": "node --import tsx src/cli/index.ts",
-    "db:migrate": "node --import tsx src/db/migrate.ts"
+    "db:migrate": "node --import tsx src/db/migrate.ts",
+    "skill:validate": "node scripts/validate-skill.mjs skills/ace-hunter",
+    "job:retention": "node dist/src/cli/index.js job retention",
+    "e2e:live": "bash scripts/run-local-live-acceptance.sh"
   },
   "dependencies": {
     "cheerio": "^1.1.0",

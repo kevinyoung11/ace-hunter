@@ -180,7 +180,7 @@ async function createProductionCliRuntime(
           return analyzeXPosts({ pool, analyzer }, { productId: id, observedAt });
         },
         killActiveChildren: realtimeX.cleanup,
-        persist: async (observation) => persistRealtimeObservation(pool, observation),
+        persist: async (observation) => persistRealtimeObservation(pool, observation, config.userId),
         enqueueComments: async () => undefined,
       }, productId, { deadlineMs: 60_000, now: observedAt });
       } finally {
@@ -271,7 +271,7 @@ export function createDatabaseCliDependencies(options: DatabaseCliOptions): CliD
     io: options.io ?? processIo,
     now,
     today: async () => today(options.pool),
-    analyze: async (target) => analyzeResolved(options.pool, await resolve(target), now()),
+    analyze: async (target) => analyzeResolved(options.pool, await resolve(target), now(), options.userId),
     observe: async (target) => {
       const resolution = await resolve(target);
       if (resolution.kind !== "found") return resolution;
@@ -334,6 +334,7 @@ async function analyzeResolved(
   pool: Pool,
   resolution: ProductResolution,
   at: Date,
+  userId: string,
 ): Promise<CommandOutput> {
   if (resolution.kind !== "found") return resolution;
   const result = await analyzeProduct({
@@ -360,6 +361,7 @@ async function analyzeResolved(
       });
       return new AnalysisOutputStore(pool).upsert({
         outputType: "product_analysis",
+        userId,
         productId: input.productId,
         periodStart: input.periodStart,
         periodEnd: input.periodEnd,
@@ -541,6 +543,7 @@ export async function loadProductFreshness(
 export async function persistRealtimeObservation(
   pool: Pool,
   observation: ObservationPersistence,
+  userId?: string,
 ): Promise<string> {
   const item = await loadProductItem(pool, observation.productId, observation.dataCutoffAt);
   if (!item) throw new Error("product_facts_unavailable");
@@ -554,6 +557,7 @@ export async function persistRealtimeObservation(
   });
   return new AnalysisOutputStore(pool).upsert({
     outputType: "realtime_observation",
+    userId,
     productId: observation.productId,
     periodStart: observation.dataCutoffAt,
     periodEnd: observation.dataCutoffAt,

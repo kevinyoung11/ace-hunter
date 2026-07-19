@@ -6,7 +6,7 @@ import { analyzePostRows, type AnalyzablePostRow } from "./analyze-x-posts.js";
 import { upsertPost } from "./collect-x-posts.js";
 
 export interface CollectXCommentsDependencies { pool: Pool; source: XSourceAdapter; analyzer: ContentAnalyzer }
-export interface CollectXCommentsOptions { productId: string; observedAt: Date }
+export interface CollectXCommentsOptions { productId: string; observedAt: Date; rootPostIds?: readonly string[] }
 
 interface RootRow {
   x_post_id: string; conversation_id: string; x_created_at: Date; repository_id: string | null;
@@ -23,8 +23,9 @@ export async function collectXComments(
   const roots = (await dependencies.pool.query<RootRow>(`select x_post_id,conversation_id,x_created_at,repository_id
     from ace_hunter.product_x_posts where product_id=$1 and post_type in ('original','article')
       and not is_duplicate and relevance_score>=0.6 and replies>=3 and conversation_id is not null
+      and ($2::text[] is null or x_post_id=any($2::text[]))
     order by relevance_score desc,(likes+reposts+quotes+replies) desc,x_created_at desc,x_post_id limit 5`,
-  [options.productId])).rows;
+  [options.productId, options.rootPostIds ?? null])).rows;
   if (roots.length === 0) return { expected: 0, succeeded: 0, failed: [], skipped: 0 };
   const collected = new Map<string, { fact: XPostFact; repositoryId: string | null; rootId: string }>();
   try {
@@ -68,5 +69,10 @@ function validateOptions(options: CollectXCommentsOptions): void {
   const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
   if (!uuid.test(options.productId) || !Number.isFinite(options.observedAt.getTime())) {
     throw new JobError("validation_error", false, "invalid X comment collection input");
+  }
+  if (options.rootPostIds !== undefined && (options.rootPostIds.length > 5_000 ||
+      new Set(options.rootPostIds).size !== options.rootPostIds.length ||
+      options.rootPostIds.some((id) => typeof id !== "string" || id.length === 0 || id.length > 512))) {
+    throw new JobError("validation_error", false, "invalid frozen X comment roots");
   }
 }

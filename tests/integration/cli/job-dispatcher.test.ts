@@ -29,7 +29,7 @@ it("runs real retention and report jobs through durable JobRunner idempotently",
     githubSourceFactory: neverGithub,
     trendingSource: neverTrending,
     xSource: neverX,
-    analyzer: null,
+    analyzer: { analyze: async () => [] },
   });
   const retention = await run({
     name: "retention",
@@ -55,6 +55,30 @@ it("runs real retention and report jobs through durable JobRunner idempotently",
   expect(report).toMatchObject({ status: "success" });
   expect((await runtimePool.query("select status from ace_hunter.analysis_outputs where output_type='daily_report'")).rows[0].status)
     .toBe("partial");
+
+  const evaluation = await run({
+    name: "evaluate_success",
+    triggerType: "manual",
+    scheduledFor: new Date("2026-07-19T03:15:00Z"),
+    parameters: {},
+  });
+  expect(evaluation).toMatchObject({ status: "success", executed: true });
+  expect((await runtimePool.query(
+    "select structured_content->'evaluation' evaluation from ace_hunter.analysis_outputs where output_type='daily_report'",
+  )).rows[0].evaluation).toMatchObject({
+    status: "not_enough_history",
+    source_job_run_id: evaluation.runId,
+  });
+
+  const comments = await run({
+    name: "collect_x_comments",
+    triggerType: "manual",
+    scheduledFor: new Date("2026-07-19T03:20:00Z"),
+    parameters: {},
+  });
+  expect(comments).toMatchObject({ status: "success" });
+  expect((await runtimePool.query("select parameters from ace_hunter.job_runs where id=$1", [comments.runId])).rows[0].parameters)
+    .toMatchObject({ product_ids: [], root_post_ids: [] });
 });
 
 it("persists a failed job and rejects so the CLI exits nonzero", async () => {

@@ -1,6 +1,14 @@
 import type { Pool, PoolClient } from "pg";
 
 export interface CompactionResult { snapshotsDeleted: number; jobRunsDeleted: number }
+export type CapacityStatus = "ok" | "warning" | "review_required";
+
+export function repositoryCapacityStatus(count: number): CapacityStatus {
+  if (!Number.isSafeInteger(count) || count < 0) throw new Error("invalid_repository_count");
+  if (count >= 950) return "review_required";
+  if (count >= 800) return "warning";
+  return "ok";
+}
 
 export async function compactSnapshots(pool: Pool, now: Date): Promise<CompactionResult> {
   if (!Number.isFinite(now.getTime())) throw new Error("invalid_retention_time");

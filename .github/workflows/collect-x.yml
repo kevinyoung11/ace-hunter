@@ -1,0 +1,48 @@
+name: collect and analyze X
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ace-hunter-collect-x
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    runs-on: [self-hosted, ace-hunter]
+    environment: ace-hunter-production
+    timeout-minutes: 45
+    env:
+      ACE_HUNTER_RUNTIME_DATABASE_URL: ${{ secrets.ACE_HUNTER_RUNTIME_DATABASE_URL }}
+      ACE_HUNTER_GITHUB_TOKEN: ${{ secrets.ACE_HUNTER_GITHUB_TOKEN }}
+      ACE_HUNTER_USER_ID: ${{ secrets.ACE_HUNTER_USER_ID }}
+      ACE_HUNTER_DEEPSEEK_API_KEY: ${{ secrets.ACE_HUNTER_DEEPSEEK_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Collect original posts
+        run: >-
+          node dist/src/cli/index.js job collect_x_posts
+          --orchestrator-run-id '${{ github.run_id }}'
+          --orchestrator-run-attempt '${{ github.run_attempt }}'
+          --orchestrator-workflow 'collect-x.yml'
+      - name: Analyze original posts
+        run: >-
+          node dist/src/cli/index.js job analyze_x_posts
+          --orchestrator-run-id '${{ github.run_id }}'
+          --orchestrator-run-attempt '${{ github.run_attempt }}'
+          --orchestrator-workflow 'collect-x.yml'
+      - name: Collect and analyze comments
+        run: >-
+          node dist/src/cli/index.js job collect_x_comments
+          --orchestrator-run-id '${{ github.run_id }}'
+          --orchestrator-run-attempt '${{ github.run_attempt }}'
+          --orchestrator-workflow 'collect-x.yml'

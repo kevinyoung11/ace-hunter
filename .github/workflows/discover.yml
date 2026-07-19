@@ -1,0 +1,35 @@
+name: discover GitHub candidates
+
+on:
+  schedule: [{ cron: '17 */6 * * *' }]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ace-hunter-discover
+  cancel-in-progress: false
+
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    environment: ace-hunter-production
+    timeout-minutes: 20
+    env:
+      ACE_HUNTER_RUNTIME_DATABASE_URL: ${{ secrets.ACE_HUNTER_RUNTIME_DATABASE_URL }}
+      ACE_HUNTER_GITHUB_TOKEN: ${{ secrets.ACE_HUNTER_GITHUB_TOKEN }}
+      ACE_HUNTER_USER_ID: ${{ secrets.ACE_HUNTER_USER_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: >-
+          node dist/src/cli/index.js job discover_github_candidates
+          --orchestrator-run-id '${{ github.run_id }}'
+          --orchestrator-run-attempt '${{ github.run_attempt }}'
+          --orchestrator-workflow 'discover.yml'
