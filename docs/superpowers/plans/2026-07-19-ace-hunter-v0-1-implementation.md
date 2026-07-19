@@ -1316,7 +1316,7 @@ git commit -m "feat: collect and analyze x discussions"
 - Test: `tests/unit/analysis/scoring.test.ts`
 - Test: `tests/integration/reports/report-data.test.ts`
 
-- [ ] **Step 1: Write the failing golden score test**
+- [x] **Step 1: Write the failing golden score test**
 
 ```ts
 // tests/unit/analysis/scoring.test.ts
@@ -1329,7 +1329,7 @@ it("computes the approved weighted score", () => {
     { productId: "b", stars: 240, stars24hAgo: 200, repoAgeHours: 48, xStatus: "success_with_results", xPosts: 1, xAuthors: 1, xEngagement: 10, trending: ["weekly"] },
   ], "success");
   expect(result.map((x) => [x.productId, x.githubMomentum, x.xAttention, x.trendingSignal, x.attentionScore]))
-    .toEqual([["b", 100, 50, 70, 87], ["a", 50, 100, 0, 55]]);
+    .toEqual([["b", 100, 50, 70, 87], ["a", 70, 100, 0, 69]]);
 });
 
 it("distinguishes empty X success from a source-wide X failure", () => {
@@ -1349,13 +1349,13 @@ it("uses only successful Products for X percentiles during a mixed partial run",
 });
 ```
 
-- [ ] **Step 2: Run the RED score test**
+- [x] **Step 2: Run the RED score test**
 
 Run: `npm test -- --run tests/unit/analysis/scoring.test.ts`
 
 Expected: FAIL with `Cannot find module '../../../src/analysis/scoring.js'`.
 
-- [ ] **Step 3: Implement CUME_DIST and scoring as pure code**
+- [x] **Step 3: Implement CUME_DIST and scoring as pure code**
 
 ```ts
 // src/analysis/percentiles.ts
@@ -1393,7 +1393,9 @@ export function rankCandidates(input: readonly ScoreInput[], xRunStatus: "succes
 
 `xRunStatus` is read from the latest X collection Job at/before cutoff, not inferred from post counts: all product queries completed is `success`, a mix of completed and failed product queries is `partial`, and no product query completed is `unavailable`. X percentiles use only Products with `success_with_results` or `success_empty`; failed Products neither contribute values nor receive an X percentile. Only global `unavailable` reweights GitHub/Trending. A partial run retains normal global weights and gives the failed Product a missing X component of zero, preventing missing data from improving rank.
 
-- [ ] **Step 4: Implement the cutoff-safe report dataset query and test it**
+Golden correction: both example Products have the same 24-hour growth rate (`0.2`), so the approved CUME_DIST tie rule gives both a growth percentile of 100. Therefore Product A's GitHub Momentum is `0.6×50 + 0.4×100 = 70` and its Attention Score is `69`; the earlier `50/55` expectation contradicted the formula and tie rule.
+
+- [x] **Step 4: Implement the cutoff-safe report dataset query and test it**
 
 ```ts
 // src/reports/report-data.ts
@@ -1421,13 +1423,15 @@ export async function loadReportCandidates(pool: Pool, cutoff: Date) {
 
 `tests/integration/reports/report-data.test.ts` inserts a monitor-only Repo, a Product with Primary and Secondary Repos, a Repo that appeared only in an old Trending batch, a currently Trending candidate, a never-Trending candidate, and a Repo whose first Trending snapshot is after the report cutoff. It also stores a stale `candidate_buckets` value that disagrees with cutoff facts. Assert monitor-only is absent; Secondary snapshots cannot change Product score; old history does not set current Signal; a first appearance at or before cutoff excludes the Repo from pre-Trending evaluation; a future first appearance does not leak backward; current membership comes only from the last successful batch; eligibility is recalculated at cutoff; and the 24-hour reference snapshot is nearest within 90 minutes.
 
-- [ ] **Step 5: Run GREEN ranking checks**
+- [x] **Step 5: Run GREEN ranking checks**
 
 Run: `ACE_TEST_DATABASE_URL=$ACE_TEST_DATABASE_URL npm test -- --run tests/unit/analysis/scoring.test.ts tests/integration/reports/report-data.test.ts && npm run typecheck && npm run lint`
 
 Expected: PASS for golden arithmetic, tied CUME_DIST values, single-candidate 100, cold start, monitor exclusion, Primary-only scoring, X status behavior, and prediction-leakage exclusion.
 
-- [ ] **Step 6: Commit Task 8**
+Actual: 19 focused tests passed. The dataset derives global X availability by aggregating all terminal per-Product runs in the latest scheduled batch, prevents a late older JobRun from replacing a newer batch, reconstructs each Product's pre-cutoff X status from `parameters.productId` lineage and `items_expected`, rejects unsafe JavaScript integers, and conservatively excludes X metrics that cannot be proven at the cutoff. Repository facts require both the scheduled bucket and actual `observed_at` (or creation time) to be at/before cutoff; Trending facts with lineage require the source Job to have completed by cutoff. The first independent review found these two cutoff-leakage risks; both were fixed and the follow-up review found no remaining P0–P2 issues.
+
+- [x] **Step 6: Commit Task 8**
 
 ```bash
 git add src/analysis/percentiles.ts src/analysis/scoring.ts src/reports/report-data.ts tests/unit/analysis/scoring.test.ts tests/integration/reports/report-data.test.ts
