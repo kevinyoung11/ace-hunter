@@ -1177,7 +1177,7 @@ git commit -m "feat: refresh and retain github repository metrics"
 - Test: `tests/contract/sources/x-live.test.ts`
 - Test: `tests/integration/jobs/x-pipeline.test.ts`
 
-- [ ] **Step 1: Write failing query, limit, and status tests**
+- [x] **Step 1: Write failing query, limit, and status tests**
 
 ```ts
 // tests/unit/sources/x/query-builder.test.ts
@@ -1219,13 +1219,13 @@ it("rejects bad auth/version but accepts a legal empty search", async () => {
 });
 ```
 
-- [ ] **Step 2: Run RED X tests**
+- [x] **Step 2: Run RED X tests**
 
 Run: `ACE_TEST_DATABASE_URL=$ACE_TEST_DATABASE_URL npm test -- --run tests/unit/sources/x tests/unit/analysis/deduplicate-posts.test.ts tests/integration/jobs/x-pipeline.test.ts`
 
 Expected: FAIL because X source, query builder, deduplication, and jobs do not exist.
 
-- [ ] **Step 3: Implement source and analysis contracts**
+- [x] **Step 3: Implement source and analysis contracts**
 
 ```ts
 // src/sources/x/x-source.ts
@@ -1265,9 +1265,9 @@ Adapter construction first runs `twitter --version`, requires exact semantic ver
 
 The contract suite includes an opt-in real fixture gate using `E2E_X_REPO_QUERY` defaulting to `"https://github.com/xai-org/grok-build"`, `E2E_X_ROOT_TWEET_ID` defaulting to `2078468415967367298`, and `E2E_X_ARTICLE_TWEET_ID` defaulting to `2078268943345803407`. At review time the search returned five records, the root conversation returned five items including the root, and the Article returned nonempty `articleText`. The test asserts only current invariants—envelope `ok=true`, `schema_version='1'`, nonempty `data`, requested root present, and nonempty Article text. If a public fixture disappears, fail as `fixture_unavailable` and replace it with another manually verified public ID; never substitute a mock for this real gate.
 
-`model-content-analyzer.ts` sends a JSON Schema response request with native `fetch` to `DEEPSEEK_BASE_URL`, authenticates with `ACE_HUNTER_DEEPSEEK_API_KEY`, and records `DEEPSEEK_MODEL`. It accepts only one analysis for every requested ID, validates scores within `[0,1]`, records `analysis_version='x-v1'`, and retries malformed model output at most twice before returning a typed partial failure.
+`model-content-analyzer.ts` sends a native `fetch` request to `DEEPSEEK_BASE_URL`, authenticates with `ACE_HUNTER_DEEPSEEK_API_KEY`, and records `DEEPSEEK_MODEL`. DeepSeek's documented Chat Completions contract accepts `response_format.type='json_object'`, not OpenAI's `json_schema` response type; the adapter therefore embeds the exact JSON Schema in the system prompt, enables JSON Output, and enforces that schema locally with Zod. This behavior is covered by both request-shape tests and a real DeepSeek contract. It accepts only one analysis for every requested ID, validates scores within `[0,1]`, records `analysis_version='x-v1'`, and retries malformed model output at most twice before returning a typed partial failure.
 
-- [ ] **Step 4: Implement the exact X pipeline rules**
+- [x] **Step 4: Implement the exact X pipeline rules**
 
 ```ts
 // src/analysis/deduplicate-posts.ts
@@ -1283,9 +1283,9 @@ export function deduplicatePosts(posts: XPostFact[]): Array<XPostFact & { duplic
 }
 ```
 
-`collect-x-posts.ts` uses the five ordered queries, excludes Retweets, backfills seven days on first success, overlaps six hours thereafter, deduplicates by `x_post_id`, saves no more than 50 candidates, and updates all four Product X status fields in the same transaction: nonempty success is `success_with_results`, empty success is `success_empty`, a typed CLI failure is `unavailable`, and an untouched Product remains `not_collected`. `analyze-x-posts.ts` analyzes at most 30 nonduplicate candidates and excludes relevance below `0.6` from reporting without deleting the fact. `collect-x-comments.ts` selects the five highest relevant original posts, skips originals with fewer than three replies, saves no more than 20 replies per original, then invokes the same versioned `ContentAnalyzer` for the persisted Comment rows and writes their relevance/topic/sentiment/stance fields. Comment collection and analysis remain outside realtime first response but must finish in the scheduled pipeline.
+`collect-x-posts.ts` uses the five ordered queries, excludes Retweets, backfills seven days on first success, overlaps six hours thereafter, deduplicates by `x_post_id` and normalized content across both the current and retained prior collections, saves no more than 50 candidates, expands Article bodies exposed by the CLI, and updates all four Product X status fields in the same transaction: nonempty success is `success_with_results`, empty success is `success_empty`, a typed CLI failure is `unavailable`, and an untouched Product remains `not_collected`. Overlap refreshes cannot turn a Post into a duplicate of itself. `analyze-x-posts.ts` analyzes at most 30 nonduplicate candidates, persists validated partial model results without losing facts, and excludes relevance below `0.6` from reporting without deleting the fact. `collect-x-comments.ts` selects the five highest relevant eligible original posts, skips originals with fewer than three replies, saves no more than 20 replies per original, then invokes the same versioned `ContentAnalyzer` for the persisted Comment rows and writes their relevance/topic/sentiment/stance fields. Comment collection and analysis remain outside realtime first response but must finish in the scheduled pipeline.
 
-- [ ] **Step 5: Run GREEN X checks**
+- [x] **Step 5: Run GREEN X checks**
 
 Run:
 
@@ -1298,7 +1298,9 @@ npm run lint
 
 Expected: query order, generic-name safety, seven-day/overlap windows, 50/30/5/20 limits, Retweet removal, duplicate clustering, relevance threshold, malformed-model retries, persisted Comment analysis, envelope/auth/version/empty-data failures, four collection statuses, and all three real replaceable twitter fixtures PASS. `fixture_unavailable` is a failing result.
 
-- [ ] **Step 6: Commit Task 7**
+Actual: 40 focused unit/contract/integration tests passed, followed by the 269-test full local suite, typecheck, lint, build, and `git diff --check`. The real authenticated `twitter-cli 0.8.5` contract passed status, nonempty Repository search, conversation, and Article fixtures. A real DeepSeek request initially proved that `json_schema` response format is rejected with HTTP 400; the adapter was corrected to the provider's documented `json_object` contract plus local strict Zod enforcement, after which the live versioned classification contract passed. A separate 47-second live database contract completed the real X search → PostgreSQL fact/status persistence → real DeepSeek analysis → versioned analysis persistence chain. The child CLI receives only an allowlisted runtime/network environment, not database, GitHub, or model credentials. Final independent re-review found no remaining P0–P2 issues.
+
+- [x] **Step 6: Commit Task 7**
 
 ```bash
 git add src/sources/x src/analysis/content-analyzer.ts src/analysis/model-content-analyzer.ts src/analysis/deduplicate-posts.ts src/jobs/collect-x-posts.ts src/jobs/analyze-x-posts.ts src/jobs/collect-x-comments.ts tests/unit/sources/x tests/unit/analysis/deduplicate-posts.test.ts tests/contract/sources/x-source.test.ts tests/contract/sources/x-live.test.ts tests/integration/jobs/x-pipeline.test.ts
