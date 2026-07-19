@@ -25,6 +25,16 @@ describe("ephemeral self-hosted runner", () => {
     expect(launcher).not.toMatch(/\beval\b|\bsource\b/);
   });
 
+  it("runs from an archive release root without requiring Git metadata", async () => {
+    const launcher = await readFile(launcherPath, "utf8");
+    expect(launcher).toContain('script_dir=$(cd "$(dirname "$0")" && pwd -P)');
+    expect(launcher).toContain('repo_root=$(cd "$script_dir/../.." && pwd -P)');
+    expect(launcher).toContain('release-manifest.json');
+    expect(launcher).toContain('test "$manifest_sha" = "$main_sha"');
+    expect(launcher).not.toContain("git rev-parse");
+    expect(launcher).not.toMatch(/required_command in[^\n]*\bgit\b/);
+  });
+
   it("only dispatches after online and identifies the run by time, SHA, and database ID", async () => {
     const launcher = await readFile(launcherPath, "utf8");
     const online = launcher.indexOf('test "$runner_status" = "online"');
