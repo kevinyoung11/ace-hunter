@@ -66,13 +66,14 @@ try {
       row.value.source_job_run_id === evaluationJob.id)) throw new Error("missing_current_evaluation_status");
 
   const kicked = await pool.query<{ scheduler_run_id: string }>(`select parameters->>'scheduler_run_id' scheduler_run_id
-    from ace_hunter.job_runs where created_at>$1 and job_name='collect_x_posts'
+    from ace_hunter.job_runs where created_at>$1 and parent_run_id is null and job_name='collect_x_posts'
       and parameters->>'scheduler'='launchd' order by created_at limit 1`, [kickstartBoundary]);
   if (kicked.rowCount !== 1 || !kicked.rows[0].scheduler_run_id) throw new Error("kickstarted_x_pipeline_missing");
   const scheduled = await pool.query<{
-    job_name: string; parameters: Record<string, unknown>; started_at: Date; completed_at: Date; status: string;
-  }>(`select job_name,parameters,started_at,completed_at,status from ace_hunter.job_runs
-      where parameters->>'scheduler'='launchd' and parameters->>'scheduler_run_id'=$1`,
+    job_name: string; parameters: Record<string, unknown>; scheduled_for: Date;
+    started_at: Date; completed_at: Date; status: string;
+  }>(`select job_name,parameters,scheduled_for,started_at,completed_at,status from ace_hunter.job_runs
+      where parent_run_id is null and parameters->>'scheduler'='launchd' and parameters->>'scheduler_run_id'=$1`,
   [kicked.rows[0].scheduler_run_id]);
   for (const name of ["collect_x_posts", "analyze_x_posts", "collect_x_comments"]) {
     if (!scheduled.rows.some((row) => row.job_name === name && ["success", "partial"].includes(row.status))) {
@@ -84,8 +85,9 @@ try {
   const rootIds = z.array(z.string().min(1)).min(1).parse(comments?.parameters.root_post_ids);
   const analyzed = await pool.query<{ n: number }>(`select count(*)::int n from ace_hunter.product_x_posts
     where post_type='comment' and product_id=any($1::uuid[]) and root_post_id=any($2::text[])
-      and analyzed_at between $3 and $4 and relevance_score is not null and sentiment is not null`,
-  [productIds, rootIds, comments?.started_at, comments?.completed_at]);
+      and metrics_updated_at between $3 and $4 and analyzed_at is not null
+      and relevance_score is not null and sentiment is not null`,
+  [productIds, rootIds, comments?.scheduled_for, comments?.completed_at]);
   if ((analyzed.rows[0]?.n ?? 0) < 1) throw new Error("durable_x_comments_not_analyzed");
 
   const schedulerPath = `${process.env.HOME}/Library/Application Support/AceHunter/scheduler.conf`;
