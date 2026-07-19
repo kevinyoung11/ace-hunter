@@ -1587,7 +1587,7 @@ git commit -m "feat: generate replayable daily reports"
 - Test: `tests/unit/products/observe-product.test.ts`
 - Test: `tests/integration/cli/commands.test.ts`
 
-- [ ] **Step 1: Write failing resolver and deadline tests with concrete fakes**
+- [x] **Step 1: Write failing resolver and deadline tests with concrete fakes**
 
 ```ts
 // tests/unit/products/resolve-product.test.ts
@@ -1635,7 +1635,7 @@ it("collects then analyzes stale X before returning it complete", async () => {
 });
 ```
 
-- [ ] **Step 2: Run the RED Product tests**
+- [x] **Step 2: Run the RED Product tests**
 
 Before running RED, create `tests/integration/cli/commands.test.ts`. Invoke the Commander program in-process with captured stdout/stderr and a real runtime Pool; assert `today`, `analyze`, `observe`, `follow`, `list`, and `unfollow`; assert an unseen GitHub URL creates exactly one Product on retry; assert an unseen plain name remains not-found; assert ambiguity exits 2 with candidates; and assert Follow/List/Unfollow mutate only the monitor row plus sanitized audit Job Runs. Import the still-missing `createProgram` command factory so the suite fails on the missing production boundary, not on absent test files.
 
@@ -1653,7 +1653,7 @@ Run: `ACE_TEST_DATABASE_URL=$ACE_TEST_DATABASE_URL npm test -- --run tests/unit/
 
 Expected: RED with missing Product modules and missing registered CLI command handlers; the integration CLI suite must fail before command implementation.
 
-- [ ] **Step 3: Implement product resolution and fresh-on-request orchestration**
+- [x] **Step 3: Implement product resolution and fresh-on-request orchestration**
 
 ```ts
 // src/products/resolve-product.ts
@@ -1699,7 +1699,7 @@ export async function observeProduct(deps: ObserveDependencies, productId: strin
 
 `analyze-product.ts` reads latest offline facts and persists `product_analysis`. A not-found GitHub URL calls `createProductFromRepo`; a not-found plain name remains unresolved. Every twitter-cli child process registers with an observation-scoped process registry; `killActiveChildren` sends `SIGTERM`, waits for `close`, sends `SIGKILL` after 500ms when needed, and resolves only after every child emitted `close`. The hard deadline race cannot be held by a source that ignores AbortSignal. `monitor-product.ts` only upserts or deactivates `(ACE_HUNTER_USER_ID, product_id)`; it does not add a Repository priority column. The metric scheduler derives priority through an active-monitor join. Analyze/observe are counted from their immutable `analysis_outputs`; follow/unfollow commands additionally write sanitized successful `job_runs` audit events named `user_follow`/`user_unfollow` with user/product IDs and request idempotency, enabling repeat-use measurement without a tenth table.
 
-- [ ] **Step 4: Register all CLI commands and their deterministic outputs**
+- [x] **Step 4: Register all CLI commands and their deterministic outputs**
 
 ```ts
 // registration added to src/cli/index.ts
@@ -1716,7 +1716,7 @@ program.command("job <name>").option("--period <period>").option("--scheduled-fo
 
 `runJob` validates attribution with Zod as an all-or-nothing discriminated union: hosted jobs require a decimal GitHub Run ID of at most 20 digits, attempt in `1..100`, and an allowlisted `--orchestrator-workflow`; local scheduled X jobs require `scheduler='launchd'` and a canonical UUID scheduler run ID. Each input is length-bounded, control characters are rejected, and the two attribution modes cannot be mixed. It copies only these validated values into `JobInput.parameters`; unknown metadata is rejected. `tests/integration/cli/commands.test.ts` executes both valid forms, asserts the exact persisted JSON, and runs incomplete, mixed, overlength, and unknown combinations RED before this registration is implemented.
 
-- [ ] **Step 5: Initialize and write the Skill using Skill Creator**
+- [x] **Step 5: Initialize and write the Skill using Skill Creator**
 
 Run:
 
@@ -1750,7 +1750,7 @@ Preserve facts, source links, cutoff times, model-judgment labels, `partial`, an
 
 The Skill fails clearly if the Main release has not been installed. It never relies on an npm link or feature-worktree PATH.
 
-- [ ] **Step 6: Validate the Skill and run GREEN use-case checks**
+- [x] **Step 6: Validate the Skill and run GREEN use-case checks**
 
 Run:
 
@@ -1770,7 +1770,9 @@ npm run lint
 
 Expected: Skill validation reports valid; resolver, hard deadline race, child termination, explicit stale-X collect→analyze, nonblocking Comments, monitor idempotency, follow priority set/reset, ambiguity, unseen URL creation, all commands, and JSON/Markdown output tests PASS. `npm link` exposes the built binary; a real Codex invocation discovers the Skill from the fixed temporary `CODEX_HOME`, executes `ace-hunter list` using the fixed non-secret integration environment file, and emits JSON with `monitors`. CLI help lists today/analyze/observe/follow/list/unfollow/job.
 
-- [ ] **Step 7: Commit Task 10**
+Actual: Product and CLI modules were introduced after their missing-boundary RED runs. The production binary now lazily loads the runtime configuration, uses the real restricted PostgreSQL role, resolves and creates explicit GitHub URLs, persists offline/realtime outputs, mutates monitor state and its audit event atomically, and dispatches every existing scheduled job through `JobRunner`. Forty-plus focused tests include real database commands, coherent realtime cutoff persistence, stale analyzed-X detection, job idempotency, and strict attribution. Skill Creator validation passed, and a fresh authenticated Codex process discovered the Skill from an isolated `CODEX_HOME`, invoked only the fixed deployment path, and returned `{ "monitors": [] }`. No npm link was used because the accepted deployment contract forbids development PATH fallback.
+
+- [x] **Step 7: Commit Task 10**
 
 ```bash
 git add src/products src/cli skills/ace-hunter tests/unit/products tests/integration/cli

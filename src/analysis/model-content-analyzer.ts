@@ -32,6 +32,7 @@ export interface ModelContentAnalyzerOptions {
   fetcher?: Fetcher;
   timeoutMs?: number;
   maxResponseBytes?: number;
+  signal?: AbortSignal;
 }
 
 const inputSchema = z.object({
@@ -137,6 +138,9 @@ export class ModelContentAnalyzer implements ContentAnalyzer {
 
     let lastMalformed = new MalformedOutput(ids, []);
     for (let attempt = 0; attempt < 3; attempt += 1) {
+      if (this.options.signal?.aborted) {
+        throw new ContentAnalysisError("model_unavailable", ids);
+      }
       try {
         return await this.requestAnalysis(parsedInputs.data);
       } catch (error) {
@@ -153,6 +157,9 @@ export class ModelContentAnalyzer implements ContentAnalyzer {
 
   private async requestAnalysis(posts: ReadonlyArray<ContentAnalysisInput>): Promise<PostAnalysis[]> {
     const controller = new AbortController();
+    const signal = this.options.signal === undefined
+      ? controller.signal
+      : AbortSignal.any([controller.signal, this.options.signal]);
     const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
     let response: Response;
     try {
@@ -177,7 +184,7 @@ export class ModelContentAnalyzer implements ContentAnalyzer {
           },
           max_tokens: 4_096,
         }),
-        signal: controller.signal,
+        signal,
       });
     } catch {
       throw new ContentAnalysisError("model_unavailable", posts.map(({ id }) => id));

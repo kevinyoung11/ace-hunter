@@ -127,6 +127,26 @@ describe("ModelContentAnalyzer", () => {
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
 
+  it("honors an observation-level abort before the model timeout", async () => {
+    const controller = new AbortController();
+    const fetcher = vi.fn((_input: string | URL | Request, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+      }));
+    const service = new ModelContentAnalyzer({
+      apiKey: "deepseek-secret",
+      baseUrl: "https://api.deepseek.example/v1",
+      model: "deepseek-chat",
+      fetcher,
+      timeoutMs: 60_000,
+      signal: controller.signal,
+    });
+    const pending = service.analyze(input);
+    controller.abort(new Error("observation_deadline"));
+    await expect(pending).rejects.toMatchObject({ code: "model_unavailable" });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
   it("rejects duplicate input IDs without sending content and avoids a request for empty input", async () => {
     const fetcher = vi.fn<typeof fetch>();
     const service = analyzer(fetcher);

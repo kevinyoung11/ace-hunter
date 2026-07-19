@@ -205,6 +205,41 @@ describe("GitHubHttpClient", () => {
     expect(cancelled).toBe(true);
   });
 
+  it("honors an observation-level abort before its per-request timeout", async () => {
+    const controller = new AbortController();
+    const fetcher = vi.fn((_input: string | URL | Request, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+      }));
+    const client = new GitHubHttpClient({ token: "t", signal: controller.signal, timeoutMs: 60_000, fetcher });
+    const pending = client.getRateLimit();
+    controller.abort(new Error("observation_deadline"));
+    await expect(pending).rejects.toThrow(/timeout/);
+  });
+
+  it("passes the observation signal to rate-limit sleep so the pending timer is cancellable", async () => {
+    const controller = new AbortController();
+    let sleepCancelled = false;
+    const sleep = vi.fn((_milliseconds: number, signal?: AbortSignal) => new Promise<void>((_resolve, reject) => {
+      signal?.addEventListener("abort", () => {
+        sleepCancelled = true;
+        reject(new Error("cancelled"));
+      }, { once: true });
+    }));
+    const client = new GitHubHttpClient({
+      token: "t",
+      signal: controller.signal,
+      sleep,
+      maxWaitMs: 60_000,
+      fetcher: async () => new Response("", { status: 429, headers: { "retry-after": "60" } }),
+    });
+    const pending = client.getRateLimit();
+    await vi.waitFor(() => expect(sleep).toHaveBeenCalledWith(60_000, controller.signal));
+    controller.abort(new Error("observation_deadline"));
+    await expect(pending).rejects.toThrow(/timeout/);
+    expect(sleepCancelled).toBe(true);
+  });
+
   it("creates operations with independent request budgets", async () => {
     const factory = new GitHubHttpClientFactory({ token: "t", maxRequests: 3, fetcher: async (input) => {
       const path = new URL(String(input)).pathname;

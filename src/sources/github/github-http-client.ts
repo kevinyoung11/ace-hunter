@@ -7,9 +7,10 @@ type Fetcher = (input: string | URL | Request, init?: RequestInit) => Promise<Re
 
 export interface GitHubHttpClientOptions {
   token: string;
+  signal?: AbortSignal;
   fetcher?: Fetcher;
   now?: () => Date;
-  sleep?: (milliseconds: number) => Promise<void>;
+  sleep?: (milliseconds: number, signal?: AbortSignal) => Promise<void>;
   timeoutMs?: number;
   maxBodyBytes?: number;
   maxRequests?: number;
@@ -91,7 +92,7 @@ const releasePageGraphQuery = `query RepositoryReleasePage($owner:String!,$name:
 export class GitHubHttpClient implements GitHubMetricSourceOperation {
   private readonly fetcher: Fetcher;
   private readonly now: () => Date;
-  private readonly sleep: (milliseconds: number) => Promise<void>;
+  private readonly sleep: (milliseconds: number, signal?: AbortSignal) => Promise<void>;
   private readonly timeoutMs: number;
   private readonly maxBodyBytes: number;
   private readonly budget: RequestBudget;
@@ -104,7 +105,7 @@ export class GitHubHttpClient implements GitHubMetricSourceOperation {
     }
     this.fetcher = options.fetcher ?? fetch;
     this.now = options.now ?? (() => new Date());
-    this.sleep = options.sleep ?? (async (milliseconds) => await new Promise((resolve) => setTimeout(resolve, milliseconds)));
+    this.sleep = options.sleep ?? abortableSleep;
     this.timeoutMs = options.timeoutMs ?? 15_000;
     this.maxBodyBytes = options.maxBodyBytes ?? 2_000_000;
     for (const [value, minimum] of [[this.timeoutMs, 1], [this.maxBodyBytes, 1], [options.maxRequests ?? 4_500, 1], [options.maxWaitMs ?? 60_000, 0]] as const) {
@@ -286,6 +287,9 @@ export class GitHubHttpClient implements GitHubMetricSourceOperation {
       if (resource && reset) { this.pendingResets.delete(resource); await this.waitUntil(reset); }
       this.budget.consumeRequest();
       const controller = new AbortController();
+      const signal = this.options.signal === undefined
+        ? controller.signal
+        : AbortSignal.any([controller.signal, this.options.signal]);
       const timer = setTimeout(() => controller.abort(), this.timeoutMs);
       let response: Response;
       try {
@@ -293,7 +297,7 @@ export class GitHubHttpClient implements GitHubMetricSourceOperation {
           method: init.method ?? "GET",
           body: init.body,
           redirect: "error",
-          signal: controller.signal,
+          signal,
           headers: {
             Accept: "application/vnd.github+json",
             Authorization: `Bearer ${this.options.token}`,
@@ -304,11 +308,11 @@ export class GitHubHttpClient implements GitHubMetricSourceOperation {
         });
       } catch {
         clearTimeout(timer);
-        throw new GitHubSourceError(controller.signal.aborted ? "timeout" : "network_error");
+        throw new GitHubSourceError(signal.aborted ? "timeout" : "network_error");
       }
       if (response.status === 403 && !shouldRetryRateLimit(response)) {
         let secondary: boolean;
-        try { secondary = await isHeaderlessSecondaryLimit(response, this.maxBodyBytes, controller.signal); }
+        try { secondary = await isHeaderlessSecondaryLimit(response, this.maxBodyBytes, signal); }
         finally { clearTimeout(timer); }
         if (!secondary) throw new GitHubSourceError("authentication_error");
         if (attempt === 1) throw new GitHubSourceError("rate_limit");
@@ -326,9 +330,9 @@ export class GitHubHttpClient implements GitHubMetricSourceOperation {
       if (!response.ok) { clearTimeout(timer); await cancelBody(response); throw statusError(response.status); }
       let body: unknown;
       try {
-        body = await readBoundedJson(response, this.maxBodyBytes, controller.signal);
+        body = await readBoundedJson(response, this.maxBodyBytes, signal);
       } catch (error) {
-        if (controller.signal.aborted) throw new GitHubSourceError("timeout");
+        if (signal.aborted) throw new GitHubSourceError("timeout");
         throw error;
       } finally { clearTimeout(timer); }
       const parsed = schema.safeParse(body);
@@ -346,7 +350,16 @@ export class GitHubHttpClient implements GitHubMetricSourceOperation {
   }
   private async waitMilliseconds(milliseconds: number): Promise<void> {
     this.budget.allowWait(milliseconds);
-    await this.sleep(milliseconds);
+    const signal = this.options.signal;
+    if (signal?.aborted) throw new GitHubSourceError("timeout");
+    try {
+      if (signal === undefined) await this.sleep(milliseconds);
+      else await this.sleep(milliseconds, signal);
+    } catch {
+      if (signal?.aborted) throw new GitHubSourceError("timeout");
+      throw new GitHubSourceError("source_unavailable");
+    }
+    if (signal?.aborted) throw new GitHubSourceError("timeout");
   }
   private captureExhaustedResource(headers: Headers, requestedResource: "search" | "core" | "graphql"): void {
     const remaining = headers.get("x-ratelimit-remaining");
@@ -355,6 +368,23 @@ export class GitHubHttpClient implements GitHubMetricSourceOperation {
     if (resource !== requestedResource) throw new GitHubSourceError("rate_limit_resource_invalid");
     this.pendingResets.set(requestedResource, parseResetHeader(headers));
   }
+}
+
+async function abortableSleep(milliseconds: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) throw signal.reason;
+  await new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(done, milliseconds);
+    const onAbort = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+      reject(signal?.reason ?? new Error("aborted"));
+    };
+    function done() {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 function encodeFullName(fullName: string): string {

@@ -13,7 +13,7 @@ export interface DiscoverGithubDependencies {
   sourceFactory: GitHubSourceFactory;
   emitOperationalEvent: (event: OperationalEvent) => void | Promise<void>;
 }
-export interface DiscoverGithubOptions extends CapacityReviewOptions { runId?: string }
+export interface DiscoverGithubOptions extends CapacityReviewOptions { runId?: string; maxNew?: number }
 
 const day = 86_400_000;
 
@@ -48,6 +48,9 @@ async function discoverWithOperation(
   if (options.reviewedCapacityOverride === true && (!options.capacityReviewId || !options.runId)) {
     throw new JobError("validation_error", false, "capacity review audit required");
   }
+  if (options.maxNew !== undefined && (!Number.isSafeInteger(options.maxNew) || options.maxNew < 1 || options.maxNew > 1_000)) {
+    throw new JobError("validation_error", false, "invalid discovery insertion cap");
+  }
   let rateLimit: { remaining: number; resetAt: Date };
   try { rateLimit = await source.getRateLimit(); }
   catch (error) { throw toJobError(error); }
@@ -74,7 +77,19 @@ async function discoverWithOperation(
   const failed: Array<{ id: string; code: string }> = [];
   let succeeded = 0;
   let skipped = 0;
+  let newRepositories = 0;
+  const existingIds = new Set((await dependencies.pool.query<{ github_repo_id: string }>(
+    "select github_repo_id from ace_hunter.repositories where github_repo_id=any($1::bigint[])",
+    [[...found.keys()]],
+  )).rows.map((row) => row.github_repo_id));
   for (const searchRepository of found.values()) {
+    if (
+      !existingIds.has(String(searchRepository.githubRepoId)) &&
+      options.maxNew !== undefined && newRepositories >= options.maxNew
+    ) {
+      skipped += 1;
+      continue;
+    }
     let repository: GitHubRepository;
     try {
       repository = await source.getRepository(searchRepository.fullName);
@@ -125,6 +140,7 @@ async function discoverWithOperation(
       continue;
     }
     succeeded += 1;
+    if (created.repositoryCreated) newRepositories += 1;
     if (created.repositoryCreated && created.trackedCount >= 800) {
       try { await dependencies.emitOperationalEvent({ code: "capacity_warning", trackedCount: created.trackedCount }); }
       catch { /* best-effort structured log; durable evidence is in the committed snapshot */ }

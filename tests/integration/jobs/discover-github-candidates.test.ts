@@ -114,6 +114,25 @@ it("normalizes an actual invocation time to GitHub's whole-second search precisi
   expect(result.succeeded).toBe(1);
 });
 
+it("caps only new repository insertions and reports the remainder skipped", async () => {
+  const repositories = [1, 2, 3].map((githubRepoId) => githubRepo({
+    githubRepoId,
+    fullName: `cap/repo-${githubRepoId}`,
+  }));
+  const result = await discoverGithubCandidates({
+    pool: runtimePool,
+    sourceFactory: factoryFrom(fakeSource(repositories)),
+    emitOperationalEvent: () => undefined,
+  }, new Date("2026-07-19T00:00:00Z"), { maxNew: 2 });
+  expect(result).toMatchObject({ expected: 3, succeeded: 2, skipped: 1, failed: [] });
+  expect((await runtimePool.query("select count(*)::int n from ace_hunter.repositories")).rows[0].n).toBe(2);
+  await expect(discoverGithubCandidates({
+    pool: runtimePool,
+    sourceFactory: factoryFrom(fakeSource(repositories)),
+    emitOperationalEvent: () => undefined,
+  }, new Date("2026-07-19T00:00:00Z"), { maxNew: 0 })).rejects.toMatchObject({ code: "validation_error" });
+});
+
 it("revalidates latest details and skips changed stars, archive, mirror, future, and blank evidence", async () => {
   const search = Array.from({ length: 6 }, (_, index) => githubRepo({ githubRepoId: 501 + index, fullName: `same/r${index}` }));
   const details = [
