@@ -156,6 +156,11 @@ async function enrichBatch(
             core: true,
             source: "github_trending",
             source_job_run_id: options.runId ?? null,
+            metadata: {
+              name: repository.name, full_name: repository.fullName,
+              description: repository.description, repo_url: repository.repoUrl,
+              homepage_url: repository.homepageUrl,
+            },
             capacity_review_id: options.reviewedCapacityOverride ? options.capacityReviewId : null,
             capacity_status: result.capacity,
             tracked_count: result.trackedCount,

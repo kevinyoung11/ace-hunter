@@ -1450,7 +1450,7 @@ git commit -m "feat: rank product candidates with attention score"
 - Test: `tests/unit/reports/markdown-renderer.test.ts`
 - Test: `tests/integration/jobs/generate-report.test.ts`
 
-- [ ] **Step 1: Write failing evidence-bound report tests**
+- [x] **Step 1: Write failing evidence-bound report tests**
 
 ```ts
 // tests/unit/reports/daily-report.test.ts
@@ -1481,13 +1481,13 @@ it("labels model judgment and X unavailability", () => {
 });
 ```
 
-- [ ] **Step 2: Run the RED report tests**
+- [x] **Step 2: Run the RED report tests**
 
 Run: `npm test -- --run tests/unit/reports`
 
 Expected: FAIL with missing `daily-report.ts` and `markdown-renderer.ts` modules.
 
-- [ ] **Step 3: Implement fixed report contracts and evidence gates**
+- [x] **Step 3: Implement fixed report contracts and evidence gates**
 
 ```ts
 // src/reports/daily-report.ts
@@ -1515,9 +1515,9 @@ export function representativePosts<T extends { category: string; engagement: nu
 
 Every model-generated summary claim must carry its evidence tuples `(product_id,author_id,is_project_affiliated)`; unsupported claims are discarded individually before concatenation. Project-affiliated authors never count toward the three-independent-author path. `product-report.ts` uses the same fact structures for `product_analysis` and `realtime_observation`. `markdown-renderer.ts` renders the cutoff, counts, coverage, supported summary, and each item's fixed sections with capture time, ranks, scores, URLs, model labels, and fact-based risks; it never implies star fraud.
 
-- [ ] **Step 4: Implement idempotent report persistence**
+- [x] **Step 4: Implement idempotent report persistence**
 
-First create `tests/integration/jobs/generate-report.test.ts`. It seeds 12 eligible Products plus X evidence, calls the still-missing `generateReport`, and asserts Top 10, two representative X links, cutoff-only facts, one idempotent output after two calls, and `partial` when X is unavailable. It then writes `structured_content.evaluation`, reruns generation, and asserts refreshed facts plus byte-identical Evaluation.
+First create `tests/integration/jobs/generate-report.test.ts`. It seeds 12 eligible Products plus X evidence, calls the still-missing `generateReport`, and asserts Top 10, two representative X links, cutoff-only facts, one idempotent output after two calls, and `partial` when X is unavailable. It then writes `structured_content.evaluation`, mutates current source rows, reruns the same historical cutoff, and asserts byte-identical frozen cutoff facts and Evaluation.
 
 ```ts
 import { generateReport } from "../../../src/jobs/generate-report.js";
@@ -1549,15 +1549,17 @@ export async function persistDailyReport(pool: Pool, report: DailyReport, markdo
 }
 ```
 
-`generateReport` fixes the cutoff at 08:00 Asia/Shanghai and freezes evidence. Before implementing persistence, run `tests/integration/jobs/generate-report.test.ts` RED and expect missing `generate-report.ts`. The test generates a report, attaches a closed-cohort `evaluation`, reruns the daily upsert, and asserts one row with refreshed facts but byte-identical evaluation, Top 10, and two-link limits.
+`generateReport` fixes the cutoff at 08:00 Asia/Shanghai and freezes the complete cutoff input. Before implementing persistence, run `tests/integration/jobs/generate-report.test.ts` RED and expect missing `generate-report.ts`. The test generates a report, attaches a closed-cohort `evaluation`, reruns the daily upsert, and asserts one row with byte-identical cutoff facts and evaluation, Top 10, and two-link limits. Newer source observations belong to a later report and must never rewrite a historical cutoff.
 
-- [ ] **Step 5: Run GREEN report checks**
+- [x] **Step 5: Run GREEN report checks**
 
 Run: `ACE_TEST_DATABASE_URL=$ACE_TEST_DATABASE_URL npm test -- --run tests/unit/reports tests/integration/jobs/generate-report.test.ts && npm run typecheck && npm run lint`
 
 Expected: PASS for Top 10, two-link limit, evidence threshold, X status wording, model labels, risk wording, score visibility, replay equality, and database idempotency.
 
-- [ ] **Step 6: Commit Task 9**
+Actual: report modules were introduced only after the missing-module RED run. Twelve focused unit/integration tests pass against a real runtime-role PostgreSQL connection. Generation accepts only the canonical 08:00 Asia/Shanghai cutoff, freezes candidate facts and evidence, stores replayable Markdown, upserts one daily row, and preserves both historical output and a previously attached closed-cohort `evaluation` byte-for-byte on rerun. Independent review also led to evidence-tuple verification, actual snapshot capture timestamps, current Trending ranks, cutoff-snapshotted metadata, and suppression of contradictory historical links when X is unavailable.
+
+- [x] **Step 6: Commit Task 9**
 
 ```bash
 git add src/analysis/representative-posts.ts src/reports src/jobs/generate-report.ts tests/unit/reports tests/integration/jobs/generate-report.test.ts

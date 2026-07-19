@@ -9,6 +9,7 @@ export type TrendingPeriod = "daily" | "weekly" | "monthly";
 
 export interface ScoreInput {
   productId: string;
+  snapshotObservedAt?: Date;
   stars: number;
   stars24hAgo: number | null;
   repoAgeHours: number;
@@ -17,6 +18,7 @@ export interface ScoreInput {
   xAuthors: number;
   xEngagement: number;
   trending: TrendingPeriod[];
+  trendingRanks?: Partial<Record<TrendingPeriod, number>>;
 }
 
 export interface ScoreOutput extends ScoreInput {

@@ -101,6 +101,12 @@ async function discoverWithOperation(
           collectedFields: {
             core: true,
             source_job_run_id: options.runId ?? null,
+            observed_at: at.toISOString(),
+            metadata: {
+              name: repository.name, full_name: repository.fullName,
+              description: repository.description, repo_url: repository.repoUrl,
+              homepage_url: repository.homepageUrl,
+            },
             capacity_review_id: options.reviewedCapacityOverride ? options.capacityReviewId : null,
             capacity_status: persisted.capacity,
             tracked_count: persisted.trackedCount,

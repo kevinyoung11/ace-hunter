@@ -7,6 +7,7 @@ export type XRunStatus = "success" | "partial" | "unavailable";
 export interface ReportCandidate {
   productId: string;
   repositoryId: string;
+  snapshotObservedAt: Date;
   stars: number;
   stars24hAgo: number | null;
   repoAgeHours: number;
@@ -15,6 +16,7 @@ export interface ReportCandidate {
   xAuthors: number;
   xEngagement: number;
   trending: ReportTrendingPeriod[];
+  trendingRanks?: Partial<Record<ReportTrendingPeriod, number>>;
   candidateAtCutoff: boolean;
   firstTrendingAt: Date | null;
   preTrendingEligible: boolean;
@@ -23,6 +25,7 @@ export interface ReportCandidate {
 interface CandidateRow {
   product_id: string;
   repository_id: string;
+  snapshot_observed_at: Date;
   stars: string;
   stars_24h_ago: string | null;
   repo_age_hours: string;
@@ -31,6 +34,7 @@ interface CandidateRow {
   x_authors: number;
   x_engagement: string;
   trending: ReportTrendingPeriod[];
+  trending_ranks: Record<string, number>;
   candidate_at_cutoff: boolean;
   first_trending_at: Date | null;
 }
@@ -65,7 +69,8 @@ export async function loadReportCandidates(pool: Pool, cutoff: Date): Promise<Re
         and coalesce(nullif(s.collected_fields->>'observed_at','')::timestamptz,s.created_at) <= $1
     ),
     latest_snapshot as (
-      select distinct on (s.repository_id) s.repository_id,s.stars
+      select distinct on (s.repository_id) s.repository_id,s.stars,
+        coalesce(nullif(s.collected_fields->>'observed_at','')::timestamptz,s.created_at) snapshot_observed_at
       from eligible_snapshots s
       join primary_repo pr on pr.repository_id=s.repository_id
       order by s.repository_id,s.captured_at desc,s.id desc
@@ -104,14 +109,16 @@ export async function loadReportCandidates(pool: Pool, cutoff: Date): Promise<Re
       group by period,language
     ),
     current_trend as (
-      select distinct t.repository_id,t.period
+      select t.repository_id,t.period,min(t.rank)::integer rank
       from eligible_trending t
       join latest_trending_batches b using(period,language,captured_at)
       where t.collection_status='success'
+      group by t.repository_id,t.period
     ),
     current_trend_agg as (
       select repository_id,
-        array_agg(period order by case period when 'daily' then 1 when 'weekly' then 2 else 3 end)::text[] trending
+        array_agg(period order by case period when 'daily' then 1 when 'weekly' then 2 else 3 end)::text[] trending,
+        jsonb_object_agg(period,rank) trending_ranks
       from current_trend
       group by repository_id
     ),
@@ -136,7 +143,7 @@ export async function loadReportCandidates(pool: Pool, cutoff: Date): Promise<Re
       group by product_id
     ),
     facts as (
-      select p.id product_id,r.id repository_id,latest.stars,reference.stars stars_24h_ago,
+      select p.id product_id,r.id repository_id,latest.snapshot_observed_at,latest.stars,reference.stars stars_24h_ago,
         extract(epoch from ($1-r.github_created_at))/3600 repo_age_hours,
         case
           when product_x_run.status='success' and coalesce(product_x_run.items_expected,0)>0 then 'success_with_results'
@@ -150,7 +157,8 @@ export async function loadReportCandidates(pool: Pool, cutoff: Date): Promise<Re
         end x_status,
         coalesce(x.x_posts,0) x_posts,coalesce(x.x_authors,0) x_authors,
         coalesce(x.x_engagement,0) x_engagement,
-        coalesce(trend.trending,'{}'::text[]) trending,first.first_trending_at,
+        coalesce(trend.trending,'{}'::text[]) trending,
+        coalesce(trend.trending_ranks,'{}'::jsonb) trending_ranks,first.first_trending_at,
         (r.github_created_at <= $1 and (
           ($1-r.github_created_at <= interval '1 day' and latest.stars>=10) or
           ($1-r.github_created_at <= interval '7 days' and latest.stars>=100) or
@@ -183,6 +191,7 @@ export async function loadReportCandidates(pool: Pool, cutoff: Date): Promise<Re
   return result.rows.map((row) => ({
     productId: row.product_id,
     repositoryId: row.repository_id,
+    snapshotObservedAt: row.snapshot_observed_at,
     stars: toSafeInteger(row.stars, "stars"),
     stars24hAgo: row.stars_24h_ago === null ? null : toSafeInteger(row.stars_24h_ago, "stars24hAgo"),
     repoAgeHours: toFiniteNonnegative(row.repo_age_hours, "repoAgeHours"),
@@ -191,6 +200,12 @@ export async function loadReportCandidates(pool: Pool, cutoff: Date): Promise<Re
     xAuthors: toSafeInteger(row.x_authors, "xAuthors"),
     xEngagement: toSafeInteger(row.x_engagement, "xEngagement"),
     trending: row.trending,
+    trendingRanks: Object.fromEntries(
+      Object.entries(row.trending_ranks).map(([period, rank]) => [
+        period,
+        toSafeInteger(rank, `trendingRanks.${period}`),
+      ]),
+    ),
     candidateAtCutoff: row.candidate_at_cutoff,
     firstTrendingAt: row.first_trending_at,
     preTrendingEligible: row.first_trending_at === null,

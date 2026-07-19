@@ -114,6 +114,10 @@ async function refreshWithOperation(
         candidateRuleVersion: prior.candidateRuleVersion,
         collectedFields: { core: true, aux: prior.auxMetricsCapturedAt !== null, aux_reused: prior.auxMetricsCapturedAt !== null,
           source_job_run_id: options.runId ?? null, observed_at: observedAt.toISOString(),
+          metadata: {
+            name: metadata.name, full_name: metadata.fullName, description: metadata.description,
+            repo_url: metadata.repoUrl, homepage_url: metadata.homepageUrl,
+          },
           aux_window_start: prior.auxMetricsCapturedAt ? new Date(prior.auxMetricsCapturedAt.getTime() - 30 * 86_400_000).toISOString() : null,
           aux_window_end: prior.auxMetricsCapturedAt?.toISOString() ?? null },
       };

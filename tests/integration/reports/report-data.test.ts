@@ -76,6 +76,12 @@ describe("cutoff-safe report candidates", () => {
     await runtimePool.query(`insert into ace_hunter.user_product_monitors(user_id,product_id,status)
       values($1,$2,'active')`, [userId, monitorOnly.productId]);
 
+    const lateCreatedSnapshot = await seedProduct("late-created-snapshot", "2026-07-14T00:00:00Z");
+    await runtimePool.query(`insert into ace_hunter.repository_snapshots
+      (repository_id,captured_at,granularity,stars,collected_fields,created_at)
+      values($1,'2026-07-18T23:00:00Z','hourly',999,'{}','2026-07-19T00:01:00Z')`,
+    [lateCreatedSnapshot.repositoryId]);
+
     const rows = await loadReportCandidates(runtimePool, cutoff);
     expect(rows.map((row) => row.productId).sort()).toEqual(
       [candidate.productId, currentTrend.productId].sort(),

@@ -79,7 +79,13 @@ describe("collectGithubTrending", () => {
     const first = (await runtimePool.query("select stars,forks,candidate_buckets,collected_fields from ace_hunter.repository_snapshots")).rows[0];
     expect(first).toEqual({
       stars: "100", forks: "2", candidate_buckets: [],
-      collected_fields: expect.objectContaining({ core: true, source: "github_trending", capacity_status: "ok", tracked_count: 1 }),
+      collected_fields: expect.objectContaining({
+        core: true,
+        source: "github_trending",
+        metadata: expect.objectContaining({ name: "a", full_name: "one/a", repo_url: "https://github.com/one/a" }),
+        capacity_status: "ok",
+        tracked_count: 1,
+      }),
     });
 
     const existingRepository = repo(2, "two/b");
