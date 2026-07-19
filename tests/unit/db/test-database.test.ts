@@ -54,3 +54,30 @@ it("does not create any Pool before configuration validation", async () => {
   ).rejects.toThrow(/ACE_TEST_MIGRATION_DATABASE_URL/);
   expect(poolFactory).not.toHaveBeenCalled();
 });
+
+it("accepts a Docker bridge server address after literal loopback URL validation", async () => {
+  const end = vi.fn().mockResolvedValue(undefined);
+  const identities = [
+    { role_name: "postgres", rolsuper: true, rolcreatedb: true, rolcreaterole: true },
+    { role_name: "ace_hunter_migrator", rolsuper: false, rolcreatedb: false, rolcreaterole: false },
+    { role_name: "ace_hunter_runtime", rolsuper: false, rolcreatedb: false, rolcreaterole: false },
+  ];
+  const poolFactory = vi.fn(() => {
+    const identity = identities.shift()!;
+    return {
+      query: vi.fn().mockResolvedValue({
+        rows: [{
+          database_name: "ace_hunter_test",
+          server_address: "172.17.0.2",
+          ...identity,
+        }],
+      }),
+      end,
+    };
+  });
+
+  await expect(createVerifiedTestPools(valid, poolFactory as never)).resolves.toMatchObject({
+    config: { databaseName: "ace_hunter_test" },
+  });
+  expect(poolFactory).toHaveBeenCalledTimes(3);
+});

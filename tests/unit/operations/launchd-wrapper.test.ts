@@ -58,7 +58,7 @@ describe("launchd X wrapper", () => {
     first.kill("SIGTERM");
     await new Promise<void>((resolvePromise) => first.once("close", () => resolvePromise()));
     await expect(readFile(join(fixture.lock, "owner"))).rejects.toThrow();
-  });
+  }, 10_000);
 });
 
 async function makeFixture(slowPreflight: boolean) {

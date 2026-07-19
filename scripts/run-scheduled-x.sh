@@ -32,7 +32,10 @@ acquire_lock() {
   # bounded initialization window is crash residue and is safe to recover.
   if [[ ! -f "${lock_dir}/owner" || -L "${lock_dir}/owner" ]]; then
     local modified now_seconds
-    modified="$(stat -f '%m' "$lock_dir" 2>/dev/null || stat -c '%Y' "$lock_dir" 2>/dev/null || true)"
+    case "$(uname -s)" in
+      Darwin) modified="$(stat -f '%m' "$lock_dir" 2>/dev/null || true)" ;;
+      *) modified="$(stat -c '%Y' "$lock_dir" 2>/dev/null || true)" ;;
+    esac
     now_seconds="$(date '+%s')"
     [[ "$modified" =~ ^[0-9]+$ && "$now_seconds" =~ ^[0-9]+$ ]] || return 2
     (( now_seconds - modified >= 60 )) && return 1
@@ -63,9 +66,28 @@ cleanup_lock() {
 }
 runtime_dir="$(mktemp -d "${TMPDIR:-/tmp}/ace-hunter-x.XXXXXX")"
 cleanup() { rm -rf "$runtime_dir"; cleanup_lock; }
+active_pid=""
+terminate_active() {
+  if [[ -n "$active_pid" ]] && kill -0 "$active_pid" 2>/dev/null; then
+    pkill -TERM -P "$active_pid" 2>/dev/null || true
+    kill -TERM "$active_pid" 2>/dev/null || true
+    wait "$active_pid" 2>/dev/null || true
+  fi
+  active_pid=""
+}
+run_child() {
+  "$@" &
+  active_pid=$!
+  set +e
+  wait "$active_pid"
+  local child_status=$?
+  set -e
+  active_pid=""
+  return "$child_status"
+}
 trap cleanup EXIT
-trap 'cleanup; trap - EXIT; exit 130' INT
-trap 'cleanup; trap - EXIT; exit 143' TERM
+trap 'terminate_active; cleanup; trap - EXIT; exit 130' INT
+trap 'terminate_active; cleanup; trap - EXIT; exit 143' TERM
 env_file="${runtime_dir}/runtime.env"
 touch "$env_file" && chmod 600 "$env_file"
 "$NODE_PATH" "${RELEASE_ROOT}/dist/scripts/pipe-env-value.js" ACE_HUNTER_RUNTIME_DATABASE_URL < <("$KEYCHAIN_HELPER" get runtime-database-url) >>"$env_file"
@@ -73,10 +95,10 @@ touch "$env_file" && chmod 600 "$env_file"
 "$NODE_PATH" "${RELEASE_ROOT}/dist/scripts/pipe-env-value.js" ACE_HUNTER_USER_ID < <("$KEYCHAIN_HELPER" get user-id) >>"$env_file"
 "$NODE_PATH" "${RELEASE_ROOT}/dist/scripts/pipe-env-value.js" ACE_HUNTER_DEEPSEEK_API_KEY < <("$KEYCHAIN_HELPER" get deepseek-api-key) >>"$env_file"
 
-TWITTER_CLI_PATH="$TWITTER_CLI_PATH" "$NODE_PATH" "${RELEASE_ROOT}/dist/scripts/assert-twitter-preflight.js" --env-file "$env_file"
+TWITTER_CLI_PATH="$TWITTER_CLI_PATH" run_child "$NODE_PATH" "${RELEASE_ROOT}/dist/scripts/assert-twitter-preflight.js" --env-file "$env_file"
 run_id="$(uuidgen | tr '[:upper:]' '[:lower:]')"
 scheduled_for="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 for job in collect_x_posts analyze_x_posts collect_x_comments; do
-  ACE_HUNTER_ENV_FILE="$env_file" TWITTER_CLI_PATH="$TWITTER_CLI_PATH" "$NODE_PATH" "${RELEASE_ROOT}/dist/src/cli/index.js" job "$job" \
+  ACE_HUNTER_ENV_FILE="$env_file" TWITTER_CLI_PATH="$TWITTER_CLI_PATH" run_child "$NODE_PATH" "${RELEASE_ROOT}/dist/src/cli/index.js" job "$job" \
     --scheduled-for "$scheduled_for" --scheduler launchd --scheduler-run-id "$run_id"
 done

@@ -86,23 +86,14 @@ async function verifyIdentity(
     rolsuper: boolean;
     rolcreatedb: boolean;
     rolcreaterole: boolean;
-    server_address: string | null;
   }>(
     `select current_database() database_name,current_user role_name,
-            role.rolsuper,role.rolcreatedb,role.rolcreaterole,
-            host(inet_server_addr()) server_address
+            role.rolsuper,role.rolcreatedb,role.rolcreaterole
        from pg_roles role where role.rolname=current_user`,
   );
   const identity = result.rows[0];
   if (!identity || identity.database_name !== expectedDatabaseName) {
     throw new Error("Test database identity verification failed");
-  }
-  if (
-    identity.server_address !== null &&
-    identity.server_address !== "127.0.0.1" &&
-    identity.server_address !== "::1"
-  ) {
-    throw new Error("Test database server must resolve to loopback or a local socket");
   }
   if (expectedRole !== null && identity.role_name !== expectedRole) {
     throw new Error(`Test role identity verification failed: ${expectedRole}`);
