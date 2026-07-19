@@ -48,6 +48,14 @@ describe("launchd X wrapper", () => {
     await expect(stat(fixture.lock)).rejects.toThrow();
   });
 
+  it("exports a persisted proxy whitelist to the Twitter preflight child", async () => {
+    const proxy = "http://127.0.0.1:18443";
+    const fixture = await makeFixture(false, proxy);
+    const result = await runWrapper(fixture.home, true);
+    expect(result.code).toBe(0);
+    expect(await readFile(join(fixture.home, "proxy-seen"), "utf8")).toBe(proxy);
+  });
+
   it("treats an active same-wrapper PID as overlap and trap-cleans the owner's lock", async () => {
     const fixture = await makeFixture(true);
     const first = spawn("/bin/bash", [wrapper], { env: { ...process.env, HOME: fixture.home }, stdio: "ignore" });
@@ -61,7 +69,7 @@ describe("launchd X wrapper", () => {
   }, 10_000);
 });
 
-async function makeFixture(slowPreflight: boolean) {
+async function makeFixture(slowPreflight: boolean, proxy?: string) {
   const home = await mkdtemp(join(tmpdir(), "ace-hunter-launchd-"));
   temporary.push(home);
   const app = join(home, "Library/Application Support/AceHunter");
@@ -74,7 +82,7 @@ async function makeFixture(slowPreflight: boolean) {
   const node = join(bin, "node");
   const keychain = join(bin, "keychain");
   const twitter = join(bin, "twitter");
-  await writeFile(node, `#!/bin/bash\ncase "$1" in *assert-twitter-preflight.js) ${slowPreflight ? "sleep 30" : ":"};; esac\nexit 0\n`);
+  await writeFile(node, `#!/bin/bash\ncase "$1" in *assert-twitter-preflight.js) printf '%s' "\${HTTPS_PROXY:-missing}" >"$HOME/proxy-seen"; ${slowPreflight ? "sleep 30" : ":"};; esac\nexit 0\n`);
   await writeFile(keychain, "#!/bin/bash\nprintf value\n");
   await writeFile(twitter, "#!/bin/bash\nexit 0\n");
   await Promise.all([node, keychain, twitter].map((path) => chmod(path, 0o700)));
@@ -83,14 +91,22 @@ async function makeFixture(slowPreflight: boolean) {
     `TWITTER_CLI_PATH=${quote(twitter)}`,
     `KEYCHAIN_HELPER=${quote(keychain)}`,
     `RELEASE_ROOT=${quote(release)}`,
+    ...(proxy === undefined ? [] : [`HTTPS_PROXY=${quote(proxy)}`]),
     "",
   ].join("\n"), { mode: 0o600 });
   return { home, lock: join(app, "run/collect-x.lock") };
 }
 
-function runWrapper(home: string): Promise<{ code: number | null }> {
+function runWrapper(home: string, stripProxy = false): Promise<{ code: number | null }> {
   return new Promise((resolvePromise, reject) => {
-    const child = spawn("/bin/bash", [wrapper], { env: { ...process.env, HOME: home }, stdio: "ignore" });
+    const env: NodeJS.ProcessEnv = { ...process.env, HOME: home };
+    if (stripProxy) {
+      for (const name of [
+        "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "ALL_PROXY",
+        "http_proxy", "https_proxy", "no_proxy", "all_proxy",
+      ]) delete env[name];
+    }
+    const child = spawn("/bin/bash", [wrapper], { env, stdio: "ignore" });
     child.once("error", reject);
     child.once("close", (code) => resolvePromise({ code }));
   });
