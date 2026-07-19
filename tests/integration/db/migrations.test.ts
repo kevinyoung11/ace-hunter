@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { promisify } from "node:util";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { Pool } from "pg";
-import { migrate } from "../../../src/db/migrate.js";
+import { migrate, migrateWithRestrictedAdmin } from "../../../src/db/migrate.js";
 import {
   assertCatalogIsAbsentOrComplete,
   assertRuntimeActivationInvariant,
@@ -717,6 +717,17 @@ describe("complete schema", () => {
 describe("destructive migration guards", () => {
   beforeEach(emptyOwnerSchema);
   afterEach(restoreValidSchema);
+
+  it("atomically creates Auth foreign keys through the restricted-admin fallback", async () => {
+    await migrateWithRestrictedAdmin(adminPool, { expectedChecksum: migrationChecksum });
+    const client = await migratorPool.connect();
+    try { expect(await assertCatalogIsAbsentOrComplete(client)).toBe("complete"); }
+    finally { client.release(); }
+    const temporaryMembership = await adminPool.query(`select count(*)::int n from pg_auth_members edge
+      join pg_roles granted on granted.oid=edge.roleid join pg_roles member on member.oid=edge.member
+      where granted.rolname='ace_hunter_owner' and member.rolname=current_user`);
+    expect(temporaryMembership.rows[0].n).toBe(0);
+  });
 
   it("rejects a residual schema before DDL", async () => {
     await adminPool.query("create table ace_hunter.products(id uuid primary key)");

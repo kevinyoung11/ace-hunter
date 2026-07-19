@@ -233,6 +233,9 @@ end
 $$;
 alter schema ace_hunter owner to ace_hunter_owner;
 revoke all on schema ace_hunter from public;
+-- Mirror the production least-privilege baseline for the disposable test DB.
+-- The live bootstrap fingerprints this external ACL and never changes it.
+revoke create on schema public from public;
 do $$
 begin
   if not exists (

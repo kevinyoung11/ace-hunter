@@ -6,6 +6,7 @@ import type { Pool } from "pg";
 import { Pool as PgPool } from "pg";
 import { loadRuntimeConfig } from "../config/load-config.js";
 import { loadedSecretValues } from "../config/schema.js";
+import { createHttpTransport } from "../core/http-transport.js";
 import { AnalysisOutputStore } from "../db/stores/analysis-output-store.js";
 import { SnapshotStore } from "../db/stores/snapshot-store.js";
 import { ModelContentAnalyzer } from "../analysis/model-content-analyzer.js";
@@ -83,14 +84,16 @@ async function createProductionCliRuntime(
   const config = loadRuntimeConfig(env);
   const pool = new PgPool({ connectionString: config.runtimeDatabaseUrl, max: 4 });
   const lockPool = new PgPool({ connectionString: config.runtimeDatabaseUrl, max: 2 });
+  const http = createHttpTransport(env);
   await pool.query("select 1");
-  const github = new GitHubHttpClientFactory({ token: config.githubToken });
+  const github = new GitHubHttpClientFactory({ token: config.githubToken, fetcher: http.fetcher });
   const scheduledX = createManagedTwitterSource(config.twitterCliPath, env.PATH);
   const scheduledAnalyzer = config.deepseekApiKey
-    ? new ModelContentAnalyzer({
+      ? new ModelContentAnalyzer({
         apiKey: config.deepseekApiKey,
         baseUrl: config.deepseekBaseUrl,
         model: config.deepseekModel,
+        fetcher: http.fetcher,
       })
     : null;
   const runJob = createJobDispatcher({
@@ -98,7 +101,7 @@ async function createProductionCliRuntime(
     lockPool,
     loadedSecrets: loadedSecretValues(config),
     githubSourceFactory: github,
-    trendingSource: new GitHubTrendingSource(),
+    trendingSource: new GitHubTrendingSource({ fetcher: http.fetcher }),
     xSource: scheduledX.source,
     analyzer: scheduledAnalyzer,
     cleanupX: scheduledX.cleanup,
@@ -163,7 +166,7 @@ async function createProductionCliRuntime(
             "select repository_id from ace_hunter.product_repositories where product_id=$1 and is_primary",
             [id],
           )).rows.map((row) => row.repository_id);
-          const cancellableGithub = new GitHubHttpClientFactory({ token: config.githubToken, signal });
+          const cancellableGithub = new GitHubHttpClientFactory({ token: config.githubToken, signal, fetcher: http.fetcher });
           return refreshRepoMetrics({ pool, sourceFactory: cancellableGithub, now: () => observedAt }, {
             scheduledFor: observedAt, granularity: "realtime", repositoryIds,
           });
@@ -176,6 +179,7 @@ async function createProductionCliRuntime(
             baseUrl: config.deepseekBaseUrl,
             model: config.deepseekModel,
             signal,
+            fetcher: http.fetcher,
           });
           return analyzeXPosts({ pool, analyzer }, { productId: id, observedAt });
         },
@@ -211,7 +215,7 @@ async function createProductionCliRuntime(
   return {
     dependencies,
     close: async () => {
-      await Promise.all([pool.end(), lockPool.end()]);
+      await Promise.all([pool.end(), lockPool.end(), http.close()]);
     },
   };
 }

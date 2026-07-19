@@ -2053,7 +2053,7 @@ git commit -m "ci: schedule and verify ace hunter jobs"
 - Create: `ops/self-hosted-runner/actions-runner.lock`
 - Modify: `package.json`
 
-- [ ] **Step 1: Write the failing live-output assertion**
+- [x] **Step 1: Write the failing live-output assertion**
 
 ```ts
 // tests/e2e/live-system.test.ts
@@ -2075,7 +2075,7 @@ it.runIf(process.env.RUN_LIVE_E2E === "1")("stores a fresh real report and obser
 });
 ```
 
-- [ ] **Step 2: Run the live assertion RED before executing the system**
+- [x] **Step 2: Run the live assertion RED before executing the system**
 
 Run:
 
@@ -2086,7 +2086,7 @@ RUN_LIVE_E2E=1 npm test -- --run tests/e2e/live-system.test.ts
 
 Expected: FAIL because no `daily_report` and `realtime_observation` created after `ACE_E2E_STARTED_AT` exist yet.
 
-- [ ] **Step 3: Implement Supabase Schema fingerprint safety**
+- [x] **Step 3: Implement Supabase Schema fingerprint safety**
 
 `prepare-live-env.ts` is the only program allowed to read the existing configuration file. It parses dotenv data, never shell code, records the administrator catalog baseline before bootstrap, then applies only the exact reviewed role/schema/auth-grant deltas. Credential lifecycle is explicit: `--mode bootstrap` is allowed only when the fixed migration/runtime Keychain accounts do not yet exist, generates both role passwords once, stores their DSNs through the stdin-only Security.framework helper, and refuses to overwrite; `--mode local` and `--mode release` require and reuse those Keychain DSNs and never rotate a role. Bare invocation is rejected. Password rotation is a separate operator procedure that must atomically update database roles, Keychain, and GitHub Environment with rollback; local live acceptance can never rotate production credentials. The program chooses a real existing auth user, calculates the SQL checksum, and writes a temporary `0700/0600` dotenv containing exactly the required live values and fingerprint path. It prints only that pathname.
 
@@ -2183,7 +2183,7 @@ process.stdout.write("runtime permission matrix passed\n");
 
 Add `safety:runtime` to run this file. It proves allowed Ace Hunter read/write in a rolled-back transaction and denied schema creation, public-table creation, `auth.users` read, RLS alteration, and migration-role escalation.
 
-- [ ] **Step 4: Implement live GitHub, twitter-cli, and DeepSeek smoke checks**
+- [x] **Step 4: Implement live GitHub, twitter-cli, and DeepSeek smoke checks**
 
 ```ts
 // scripts/live-x-smoke.ts
@@ -2203,7 +2203,7 @@ process.stdout.write("twitter-cli authenticated search passed\n");
 
 `live-github-smoke.ts` calls `/rate_limit`, fetches `ACE_E2E_REPOSITORY`, and invokes all three live Trending collections; it fails if any collection stores zero rows. It compares one stored Stars/Forks pair with a direct GitHub response. `live-x-smoke.ts` requires authenticated `status` plus the replaceable environment defaults above, validates envelope/version/nonempty data, passes at least one returned post through `ModelContentAnalyzer`, and verifies `DEEPSEEK_MODEL` is stored. A disappeared public fixture is `fixture_unavailable` and blocks release until a newly manually verified public ID replaces it; mock data is forbidden. Scripts print counts and public IDs only, never raw content, session data, tokens, or database URLs.
 
-- [ ] **Step 5: Implement the one-command live orchestration**
+- [x] **Step 5: Implement the one-command live orchestration**
 
 ```ts
 // scripts/live-e2e.ts
@@ -2232,7 +2232,7 @@ await run(["unfollow", target]);
 
 Set `e2e:live` to `node --import tsx scripts/live-e2e.ts`, `smoke:github` to the GitHub script, and `smoke:x` to the X/DeepSeek script. The runbook documents only environment variable names, least-privilege `ace_hunter` role grants, local PostgreSQL 14 commands, scheduler ownership, four X statuses, partial-job response, forward-only corrective migration, and secret rotation.
 
-- [ ] **Step 6: Run the complete local regression**
+- [x] **Step 6: Run the complete local regression**
 
 Run:
 
@@ -2247,11 +2247,11 @@ python /Users/apulu/.codex/skills/.system/skill-creator/scripts/quick_validate.p
 
 Expected: every unit, local PostgreSQL 14 integration, contract, CLI, migration, ranking, report, retention, and non-live E2E test PASS; typecheck/lint/build exit 0; both Skill validators pass; `dist/src/cli/index.js` exists.
 
-- [ ] **Step 7: Implement one-process live acceptance with verified secret cleanup**
+- [x] **Step 7: Implement one-process live acceptance with verified secret cleanup**
 
 `scripts/run-local-live-acceptance.sh` is the only local release entry point. It first compiles `keychain-secret.swift` into `${HOME}/Library/Application Support/AceHunter/bin/ace-hunter-keychain`, verifies its owner/mode/signature inputs, and uses that stable absolute helper for credential bootstrap/retrieval. In one shell process it calls `prepare-live-env.ts`, validates the returned absolute path with `realpath` against `${TMPDIR:-/tmp}/ace-hunter-live-[A-Za-z0-9._-]*/runtime.env`, verifies current ownership and exact directory/file modes `0700/0600`, and only then installs an `EXIT INT TERM` trap. Cleanup repeats those validations before deleting the one matching directory and clears all three traps after explicit deletion. It then reads the fingerprint pathname with strict dotenv parsing and runs migration, Schema/runtime safety, live GitHub, live X/DeepSeek, the full CLI E2E, and the live Vitest assertion. Neither `live_env` nor its lifetime crosses a Run block.
 
-- [ ] **Step 8: Run GREEN real Supabase, GitHub, X, DeepSeek, report, and observation E2E**
+- [x] **Step 8: Run GREEN real Supabase, GitHub, X, DeepSeek, report, and observation E2E**
 
 Run exactly one command; never source either configuration file:
 

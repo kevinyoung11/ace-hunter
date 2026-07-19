@@ -40,6 +40,7 @@ if [[ -f "${bin_dir}/keychain-secret" && ! -L "${bin_dir}/keychain-secret" ]]; t
 if [[ -f "${app_dir}/scheduler.conf" && ! -L "${app_dir}/scheduler.conf" ]]; then cp -p "${app_dir}/scheduler.conf" "${transaction}/config"; printf 'file\n' >"${transaction}/config.state"; fi
 if [[ -f "$agent" && ! -L "$agent" ]]; then cp -p "$agent" "${transaction}/agent"; printf 'file\n' >"${transaction}/agent.state"; fi
 domain="gui/$(id -u)"
+helper_build_dir=""
 rollback() {
   trap - ERR HUP INT TERM
   launchctl bootout "$domain" "$agent" >/dev/null 2>&1 || true
@@ -50,23 +51,33 @@ rollback() {
     cp -p "${transaction}/agent" "$agent"
     launchctl bootstrap "$domain" "$agent" >/dev/null 2>&1 || true
   fi
+  case "$helper_build_dir" in "${bin_dir}"/keychain-build.*) rm -rf "$helper_build_dir";; esac
   rm -rf "$transaction"
 }
 trap 'rollback' ERR
 trap 'rollback; exit 129' HUP
 trap 'rollback; exit 130' INT
 trap 'rollback; exit 143' TERM
-helper_tmp="${bin_dir}/.keychain-secret.$$"
-xcrun swiftc -framework Security "${release_root}/ops/launchd/keychain-secret.swift" -o "$helper_tmp"
+helper_build_dir="$(mktemp -d "${bin_dir}/keychain-build.XXXXXX")"
+helper_tmp="${helper_build_dir}/keychain-secret"
+xcrun swiftc -module-name AceHunterKeychain -framework Security "${release_root}/ops/launchd/keychain-secret.swift" -o "$helper_tmp"
 chmod 700 "$helper_tmp"
-mv -f "$helper_tmp" "${bin_dir}/keychain-secret"
+if [[ -e "${bin_dir}/keychain-secret" ]]; then
+  cmp -s "$helper_tmp" "${bin_dir}/keychain-secret" || { printf 'keychain_helper_upgrade_requires_migration\n' >&2; exit 1; }
+  rm -f "$helper_tmp"
+else
+  mv -f "$helper_tmp" "${bin_dir}/keychain-secret"
+fi
+rmdir "$helper_build_dir"
+helper_build_dir=""
 
 config_tmp="${app_dir}/.scheduler.conf.$$"
+quoted() { "$node_path" -e 'process.stdout.write(JSON.stringify(process.argv[1]))' "$1"; }
 {
-  printf 'NODE_PATH=%q\n' "$node_path"
-  printf 'TWITTER_CLI_PATH=%q\n' "$twitter_path"
-  printf 'KEYCHAIN_HELPER=%q\n' "${bin_dir}/keychain-secret"
-  printf 'RELEASE_ROOT=%q\n' "$release_root"
+  printf 'NODE_PATH=%s\n' "$(quoted "$node_path")"
+  printf 'TWITTER_CLI_PATH=%s\n' "$(quoted "$twitter_path")"
+  printf 'KEYCHAIN_HELPER=%s\n' "$(quoted "${bin_dir}/keychain-secret")"
+  printf 'RELEASE_ROOT=%s\n' "$(quoted "$release_root")"
 } >"$config_tmp"
 chmod 600 "$config_tmp"
 mv -f "$config_tmp" "${app_dir}/scheduler.conf"

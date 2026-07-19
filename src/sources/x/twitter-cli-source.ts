@@ -107,7 +107,9 @@ export class TwitterCliSource implements XSourceAdapter {
     if (!isAbsolute(options.cliPath)) fail("twitter_cli_path");
     this.cliPath = options.cliPath;
     this.spawnProcess = options.spawnProcess ?? spawn;
-    this.timeoutMs = options.timeoutMs ?? 30_000;
+    // The authenticated CLI may need to refresh browser-backed session state
+    // before returning; live measurements exceeded 30 seconds occasionally.
+    this.timeoutMs = options.timeoutMs ?? 90_000;
     this.maxOutputBytes = options.maxOutputBytes ?? 2_000_000;
     if (!Number.isInteger(this.timeoutMs) || this.timeoutMs <= 0) fail("x_validation_error");
     if (!Number.isInteger(this.maxOutputBytes) || this.maxOutputBytes <= 0) fail("x_validation_error");

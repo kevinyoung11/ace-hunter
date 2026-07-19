@@ -2,7 +2,7 @@ import Foundation
 import Security
 
 let service = "com.kevinyoung.ace-hunter"
-let allowed = Set(["runtime-database-url", "github-token", "user-id", "deepseek-api-key"])
+let allowed = Set(["migration-database-url", "runtime-database-url", "github-token", "user-id", "deepseek-api-key"])
 
 func fail(_ message: String) -> Never {
   FileHandle.standardError.write(Data((message + "\n").utf8))
@@ -23,9 +23,11 @@ if operation == "get" {
   var query = base
   query[kSecReturnData as String] = true
   query[kSecMatchLimit as String] = kSecMatchLimitOne
+  query[kSecUseAuthenticationUI as String] = kSecUseAuthenticationUIFail
   var item: CFTypeRef?
-  guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
-        let data = item as? Data else { fail("secret_unavailable") }
+  let status = SecItemCopyMatching(query as CFDictionary, &item)
+  if status == errSecItemNotFound { fail("secret_unavailable") }
+  guard status == errSecSuccess, let data = item as? Data else { fail("keychain_read_failed") }
   FileHandle.standardOutput.write(data)
 } else if operation == "set" {
   let data = FileHandle.standardInput.readDataToEndOfFile()
@@ -37,6 +39,9 @@ if operation == "get" {
     insert[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
     guard SecItemAdd(insert as CFDictionary, nil) == errSecSuccess else { fail("keychain_write_failed") }
   } else if status != errSecSuccess { fail("keychain_write_failed") }
+} else if operation == "delete" {
+  let status = SecItemDelete(base as CFDictionary)
+  guard status == errSecSuccess || status == errSecItemNotFound else { fail("keychain_delete_failed") }
 } else {
   fail("operation_not_allowed")
 }

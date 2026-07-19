@@ -321,7 +321,7 @@ begin
     execute format('grant select,insert,update,delete on ace_hunter.%I to ace_hunter_runtime',table_name);
     execute format(
       'create policy %I on ace_hunter.%I for all to ace_hunter_runtime using (true) with check (true)',
-      table_name || '_runtime', table_name
+      table_name || '_runtime'::text, table_name
     );
   end loop;
 end

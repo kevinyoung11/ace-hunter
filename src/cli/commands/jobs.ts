@@ -34,6 +34,7 @@ interface JobOptions {
   scheduledFor?: string;
   cutoffHourUtc?: string;
   maxNew?: string;
+  productId?: string;
   orchestratorRunId?: string;
   orchestratorRunAttempt?: string;
   orchestratorWorkflow?: string;
@@ -49,6 +50,7 @@ export function registerJobCommand(program: Command, dependencies: CliDependenci
     .option("--scheduled-for <iso>")
     .option("--cutoff-hour-utc <hour>")
     .option("--max-new <count>", "discovery insertion cap")
+    .option("--product-id <uuid>", "run a product-batch job for one product")
     .option("--orchestrator-run-id <id>")
     .option("--orchestrator-run-attempt <attempt>")
     .option("--orchestrator-workflow <name>")
@@ -60,6 +62,9 @@ export function registerJobCommand(program: Command, dependencies: CliDependenci
         try {
           const scheduledFor = parseScheduledFor(options.scheduledFor, dependencies.now?.() ?? new Date());
           const jobName = parseJobName(name);
+          if (options.productId !== undefined && !new Set(["collect_x_posts", "analyze_x_posts", "collect_x_comments"]).has(jobName)) {
+            throw new Error("product scope unsupported");
+          }
           const attribution = parseAttribution(options);
           if (attribution.scheduler === "launchd" && !new Set([
             "collect_x_posts",
@@ -122,6 +127,10 @@ function parseCoreParameters(options: JobOptions): Record<string, string | numbe
     result.cutoff_hour_utc = boundedInteger(options.cutoffHourUtc, 0, 23);
   }
   if (options.maxNew !== undefined) result.max_new = boundedInteger(options.maxNew, 1, 1_000);
+  if (options.productId !== undefined) {
+    if (!canonicalUuid.test(options.productId)) throw new Error("productId");
+    result.productId = options.productId.toLowerCase();
+  }
   return result;
 }
 

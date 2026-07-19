@@ -1,0 +1,93 @@
+#!/bin/bash
+set -euo pipefail
+umask 077
+[[ $# -eq 5 ]] || { printf 'usage_error\n' >&2; exit 1; }
+live_env="$(realpath "$1")"
+old_worktree="$(realpath "$2")"
+pr_head="$3"
+main_sha="$4"
+repo_root="$(realpath "$5")"
+temp_base="${TMPDIR:-/tmp}"; temp_base="$(realpath "${temp_base%/}")"
+case "$live_env" in "${temp_base}"/ace-hunter-live-*/runtime.env) ;; *) exit 1;; esac
+live_dir="$(dirname "$live_env")"
+[[ "$(stat -f '%u' "$live_env")" = "$(id -u)" && "$(stat -f '%Lp' "$live_dir")" = 700 && "$(stat -f '%Lp' "$live_env")" = 600 ]] || exit 1
+release="${HOME}/Library/Application Support/AceHunter/releases/${main_sha}"
+[[ "$(pwd -P)" != "$old_worktree" ]] || cd "$release"
+cd "$release"
+cleanup() { case "$live_dir" in "${temp_base}"/ace-hunter-live-*) rm -rf "$live_dir";; esac; }
+trap cleanup EXIT
+trap 'cleanup; trap - EXIT; exit 130' INT
+trap 'cleanup; trap - EXIT; exit 143' TERM
+
+registered="$(git -C "$repo_root" worktree list --porcelain)"
+printf '%s\n' "$registered" | grep -Fqx "worktree ${old_worktree}"
+[[ "$(git -C "$old_worktree" rev-parse HEAD)" = "$pr_head" ]]
+git -C "$old_worktree" diff --quiet && git -C "$old_worktree" diff --cached --quiet
+git -C "$repo_root" merge-base --is-ancestor "$pr_head" "$main_sha"
+git -C "$repo_root" worktree remove "$old_worktree"
+
+: "${GH_REPO:?GH_REPO is required}"
+: "${ACE_E2E_REPOSITORY:?ACE_E2E_REPOSITORY is required}"
+ci_id=""
+for attempt in $(seq 1 60); do
+  ci_id="$(gh run list --repo "$GH_REPO" --workflow ci.yml --branch main --limit 100 --json databaseId,headSha --jq "map(select(.headSha==\"$main_sha\"))|max_by(.databaseId)|.databaseId // empty")"
+  [[ -n "$ci_id" ]] && break
+  sleep 5
+done
+[[ -n "$ci_id" ]] || { printf 'main_ci_missing\n' >&2; exit 1; }
+gh run watch "$ci_id" --repo "$GH_REPO" --exit-status
+
+records="${live_dir}/acceptance-runs.ndjson"
+: >"$records" && chmod 600 "$records"
+dispatch_and_watch() {
+  local workflow="$1" before dispatched run_id attempt
+  before="$(gh run list --repo "$GH_REPO" --workflow "$workflow" --branch main --event workflow_dispatch --limit 100 --json databaseId --jq 'map(.databaseId)|max // 0')"
+  dispatched="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+  gh workflow run "$workflow" --repo "$GH_REPO" --ref main
+  run_id=""
+  for poll in $(seq 1 60); do
+    run_id="$(gh run list --repo "$GH_REPO" --workflow "$workflow" --branch main --event workflow_dispatch --limit 100 --json databaseId,headSha,createdAt --jq "map(select(.headSha==\"$main_sha\" and .createdAt>=\"$dispatched\" and .databaseId>$before))|max_by(.databaseId)|.databaseId // empty")"
+    [[ -n "$run_id" ]] && break
+    sleep 5
+  done
+  [[ -n "$run_id" ]] || return 1
+  gh run watch "$run_id" --repo "$GH_REPO" --exit-status
+  attempt="$(gh run view "$run_id" --repo "$GH_REPO" --json attempt --jq .attempt)"
+  printf '{"workflow":"%s","databaseId":%s,"runAttempt":%s}\n' "$workflow" "$run_id" "$attempt" >>"$records"
+}
+
+runner_record="$(GH_REPO="$GH_REPO" ops/self-hosted-runner/launch-ephemeral.sh "$main_sha")"
+printf '%s\n' "$runner_record" >>"$records"
+for workflow in discover.yml trending.yml refresh-metrics.yml daily-report.yml retention.yml evaluate-success.yml; do
+  dispatch_and_watch "$workflow"
+done
+acceptance_json="${live_dir}/acceptance-runs.json"
+node -e 'const fs=require("node:fs");const rows=fs.readFileSync(process.argv[1],"utf8").trim().split(/\n+/).filter(Boolean).map(JSON.parse);fs.writeFileSync(process.argv[2],JSON.stringify(rows),{mode:0o600,flag:"wx"})' "$records" "$acceptance_json"
+
+ops/launchd/install.sh "$release"
+kickstart_boundary="$(ACE_HUNTER_ENV_FILE="$live_env" node --import tsx -e 'import{Pool}from"pg";import{loadRuntimeConfig}from"./src/config/load-config.ts";const p=new Pool({connectionString:loadRuntimeConfig(process.env).runtimeDatabaseUrl});const r=await p.query("select clock_timestamp() now");await p.end();process.stdout.write(r.rows[0].now.toISOString())')"
+lock_dir="${HOME}/Library/Application Support/AceHunter/run/collect-x.lock"
+mkdir -p "$lock_dir"
+printf '999999\n%s\n' "${release}/scripts/run-scheduled-x.sh" >"${lock_dir}/owner"
+launchctl kickstart -k "gui/$(id -u)/com.kevinyoung.ace-hunter.collect-x"
+durable_ready=0
+for poll in $(seq 1 120); do
+  sleep 5
+  if ACE_HUNTER_ENV_FILE="$live_env" KICKSTART_BOUNDARY="$kickstart_boundary" node --import tsx -e 'import{Pool}from"pg";import{loadRuntimeConfig}from"./src/config/load-config.ts";const p=new Pool({connectionString:loadRuntimeConfig(process.env).runtimeDatabaseUrl});const r=await p.query("select count(*)::int n from ace_hunter.job_runs where created_at>$1 and parameters->>$2=$3",[process.env.KICKSTART_BOUNDARY,"scheduler","launchd"]);await p.end();process.exit(r.rows[0].n>=3?0:1)' 2>/dev/null; then durable_ready=1; break; fi
+done
+[[ "$durable_ready" -eq 1 ]] || { printf 'durable_x_timeout\n' >&2; exit 1; }
+
+wrapper="${HOME}/Library/Application Support/AceHunter/bin/ace-hunter"
+"$wrapper" observe "$ACE_E2E_REPOSITORY" --format json >/dev/null
+codex_binary="$(command -v codex)"
+CODEX_HOME="${CODEX_HOME:-$HOME/.codex}" "$codex_binary" exec --skip-git-repo-check 'Use $ace-hunter to list monitored products. Return only the tool result.' >/dev/null
+CODEX_HOME="${CODEX_HOME:-$HOME/.codex}" "$codex_binary" exec --skip-git-repo-check "Use \$ace-hunter to observe ${ACE_E2E_REPOSITORY}. Return only the tool result." >/dev/null
+
+: "${ACCEPTANCE_STARTED_AT:?ACCEPTANCE_STARTED_AT is required}"
+export KICKSTART_BOUNDARY="$kickstart_boundary" ACCEPTANCE_RUN_IDS_FILE="$acceptance_json" MAIN_SHA="$main_sha"
+ACE_HUNTER_ENV_FILE="$live_env" node --import tsx scripts/post-merge-acceptance.ts
+cleanup
+trap - EXIT INT TERM
+git -C "$repo_root" fetch --quiet origin main
+[[ "$(git -C "$repo_root" rev-parse origin/main)" = "$main_sha" ]]
+printf 'post_merge_release_passed\n'

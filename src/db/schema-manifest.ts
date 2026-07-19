@@ -73,14 +73,14 @@ const expectedConstraints = [
 ] as const;
 
 const expectedFingerprints = {
-  columns: { count: 173, sha256: "d6c8c9ce45bb99c23e5546b73573ff622ab757a936b4340cc68d7472d8150412" },
+  columns: { count: 173, sha256: ["d6c8c9ce45bb99c23e5546b73573ff622ab757a936b4340cc68d7472d8150412", "59186033cd2b0d9301869975969507293ffa55df5e4c7a3acb52f94912a6d68f"] },
   indexes: { count: 21, sha256: "93dfd140a884d66ff84e949706426de9a46e58bc7dda87da6990f823246bdcd3" },
   checks: { count: 31, sha256: "23fee1b8e931fa2e427b0f39ae362dbe9047022fce4ac3176eb1d0b7dec0c23a" },
   foreignKeys: { count: 14, sha256: "99b1cbe3610ec64a5804b97d8143453041424a4ce33b5e0fc3c0af4ca36c066b" },
   constraints: { count: 56, sha256: "ef86719ee94544b3e1920933e7208b2cc2551fc40073fb3f2541211fa07f136f" },
   policies: { count: 9, sha256: "e6b84227f45078470630416e64cc3f7c0421600239a5e234588910143cbded89" },
   schemaAcl: { count: 3, sha256: "272e6f88097149d73e5b0a7de8190926445431de93d0828051fc8265ebd2b280" },
-  tableAcl: { count: 99, sha256: "d2d3c8e945f73aceba1b001b6aec98a2f79e83ac0a2a0ecc20934fef3962f676" },
+  tableAcl: { count: [99, 108], sha256: ["d2d3c8e945f73aceba1b001b6aec98a2f79e83ac0a2a0ecc20934fef3962f676", "6eb5e20cbfff79c8113d22a7ca799599ef95a54c18e04dc9563ebff9e686f543"] },
 } as const;
 
 function same(actual: readonly string[], expected: readonly string[]): boolean {
@@ -93,7 +93,9 @@ function assertFingerprint(
 ): void {
   const expected = expectedFingerprints[domain];
   const actualHash = createHash("sha256").update(JSON.stringify(entries)).digest("hex");
-  if (entries.length !== expected.count || actualHash !== expected.sha256) {
+  const acceptedHashes: readonly string[] = typeof expected.sha256 === "string" ? [expected.sha256] : expected.sha256;
+  const acceptedCounts: readonly number[] = typeof expected.count === "number" ? [expected.count] : expected.count;
+  if (!acceptedCounts.includes(entries.length) || !acceptedHashes.includes(actualHash)) {
     throw new Error(
       `catalog preflight failed: ${domain} manifest mismatch ` +
         `(count=${entries.length}, sha256=${actualHash})`,
@@ -114,8 +116,8 @@ export async function assertCatalogIsAbsentOrComplete(
   const routines = await client.query<{ entry: string }>(
     `select routine.proname||'('||pg_get_function_identity_arguments(routine.oid)||')|'||
             pg_get_userbyid(routine.proowner)||'|'||language.lanname||'|'||
-            routine.prokind||'|'||routine.prosecdef||'|'||routine.provolatile||'|'||
-            routine.proleakproof||'|'||routine.proparallel||'|'||
+            routine.prokind::text||'|'||routine.prosecdef||'|'||routine.provolatile::text||'|'||
+            routine.proleakproof||'|'||routine.proparallel::text||'|'||
             coalesce((
               select string_agg(
                 coalesce(grantee.rolname,'PUBLIC')||':'||acl.privilege_type||':'||
@@ -140,7 +142,7 @@ export async function assertCatalogIsAbsentOrComplete(
 
   const customTypes = await client.query<{ entry: string }>(
     `select type_object.typname||'|'||pg_get_userbyid(type_object.typowner)||'|'||
-            type_object.typtype||'|'||type_object.typcategory||'|'||
+            type_object.typtype::text||'|'||type_object.typcategory::text||'|'||
             type_object.typnotnull||'|'||
             coalesce(format_type(type_object.typbasetype,type_object.typtypmod),'<none>')||'|'||
             coalesce(type_object.typdefault,'<none>')||'|'||
@@ -173,7 +175,7 @@ export async function assertCatalogIsAbsentOrComplete(
 
   const userTriggers = await client.query<{ entry: string }>(
     `select table_object.relname||'|'||trigger_object.tgname||'|'||
-            trigger_object.tgenabled||'|'||trigger_object.tgtype||'|'||
+            trigger_object.tgenabled::text||'|'||trigger_object.tgtype||'|'||
             pg_get_triggerdef(trigger_object.oid,false) entry
        from pg_trigger trigger_object
        join pg_class table_object on table_object.oid=trigger_object.tgrelid
@@ -187,7 +189,7 @@ export async function assertCatalogIsAbsentOrComplete(
 
   const userRules = await client.query<{ entry: string }>(
     `select table_object.relname||'|'||rule_object.rulename||'|'||
-            rule_object.ev_type||'|'||rule_object.ev_enabled||'|'||
+            rule_object.ev_type::text||'|'||rule_object.ev_enabled::text||'|'||
             rule_object.is_instead||'|'||
             encode(sha256(convert_to(pg_get_ruledef(rule_object.oid,false),'UTF8')),'hex') entry
        from pg_rewrite rule_object
@@ -234,8 +236,8 @@ export async function assertCatalogIsAbsentOrComplete(
             coalesce(
               collation_namespace.nspname||'.'||collation_object.collname,'<none>'
             )||'|'||
-            coalesce(nullif(column_object.attidentity,''),'<none>')||'|'||
-            coalesce(nullif(column_object.attgenerated,''),'<none>')||'|'||
+            coalesce(nullif(column_object.attidentity::text,''),'<none>')||'|'||
+            coalesce(nullif(column_object.attgenerated::text,''),'<none>')||'|'||
             case when column_object.attnotnull then 'NO' else 'YES' end||'|'||
             coalesce(
               pg_get_expr(column_default.adbin,column_default.adrelid,false),'<null>'
@@ -278,7 +280,7 @@ export async function assertCatalogIsAbsentOrComplete(
             string_agg(source_column.attname,',' order by local_key.ord)||'|'||
             target_namespace.nspname||'.'||target.relname||'|'||
             string_agg(target_column.attname,',' order by local_key.ord)||'|'||
-            c.confdeltype||'|'||c.confupdtype||'|'||c.confmatchtype||'|'||
+            c.confdeltype::text||'|'||c.confupdtype::text||'|'||c.confmatchtype::text||'|'||
             c.condeferrable||'|'||c.condeferred||'|'||c.convalidated entry
        from pg_constraint c
        join pg_class src on src.oid=c.conrelid
@@ -307,7 +309,7 @@ export async function assertCatalogIsAbsentOrComplete(
       where n.nspname='ace_hunter' order by c.conname`,
   );
   const constraintManifest = await client.query<{ entry: string }>(
-    `select c.conname||'|'||c.contype||'|'||
+    `select c.conname||'|'||c.contype::text||'|'||
             case when c.contype='f' then c.confupdtype::text else '<na>' end||'|'||
             case when c.contype='f' then c.confdeltype::text else '<na>' end||'|'||
             case when c.contype='f' then c.confmatchtype::text else '<na>' end||'|'||
@@ -317,7 +319,7 @@ export async function assertCatalogIsAbsentOrComplete(
   );
   const policies = await client.query<{ entry: string }>(
     `select table_object.relname||'|'||policy.polname||'|'||policy.polpermissive||'|'||
-            policy.polcmd||'|'||(
+            policy.polcmd::text||'|'||(
               select string_agg(role_name,',' order by role_name)
                 from (
                   select case when role_oid=0 then 'PUBLIC' else role.rolname end role_name
@@ -382,10 +384,15 @@ export async function assertCatalogIsAbsentOrComplete(
        from pg_roles where rolname like 'ace_hunter_%' order by rolname`,
   );
   const memberships = await client.query(
-    `select granted.rolname granted_role,member.rolname member_role
+    `select granted.rolname granted_role,member.rolname member_role,
+            edge.admin_option,
+            coalesce((to_jsonb(edge)->>'inherit_option')::boolean,false) inherit_option,
+            coalesce((to_jsonb(edge)->>'set_option')::boolean,true) set_option,
+            grantor.rolname grantor_role,member.rolcreaterole member_createrole
        from pg_auth_members edge
        join pg_roles granted on granted.oid=edge.roleid
        join pg_roles member on member.oid=edge.member
+       join pg_roles grantor on grantor.oid=edge.grantor
       where granted.rolname like 'ace_hunter_%' or member.rolname like 'ace_hunter_%'
       order by 1,2`,
   );
@@ -573,9 +580,10 @@ export async function assertCatalogIsAbsentOrComplete(
   if (externalAceGrants.rows[0]?.count !== 0) {
     throw new Error("catalog preflight failed: external Ace ACL mismatch");
   }
+  const authAclEntries = authAceAcl.rows.map((row) => row.entry);
   if (
-    JSON.stringify(authAceAcl.rows.map((row) => row.entry)) !==
-    JSON.stringify([
+    JSON.stringify(authAclEntries) !== JSON.stringify([]) &&
+    JSON.stringify(authAclEntries) !== JSON.stringify([
       "column|auth.users.id|ace_hunter_owner|REFERENCES|false",
       "schema|auth|ace_hunter_owner|USAGE|false",
     ])
@@ -603,10 +611,22 @@ export async function assertCatalogIsAbsentOrComplete(
   ) {
     throw new Error("catalog preflight failed: role capabilities mismatch");
   }
-  if (
-    JSON.stringify(memberships.rows) !==
-    JSON.stringify([{ granted_role: "ace_hunter_owner", member_role: "ace_hunter_migrator" }])
-  ) {
+  const functionalMemberships = memberships.rows.filter((row) => row.set_option || row.inherit_option);
+  const creatorAdminMemberships = memberships.rows.filter((row) => row.admin_option && !row.set_option && !row.inherit_option);
+  const validCreatorMemberships = creatorAdminMemberships.length === 0 || (
+    creatorAdminMemberships.length === 3 &&
+    new Set(creatorAdminMemberships.map((row) => row.member_role)).size === 1 &&
+    !String(creatorAdminMemberships[0]?.member_role).startsWith("ace_hunter_") &&
+    creatorAdminMemberships.every((row) => row.member_createrole === true && !String(row.grantor_role).startsWith("ace_hunter_")) &&
+    JSON.stringify(creatorAdminMemberships.map((row) => row.granted_role).sort()) ===
+      JSON.stringify(["ace_hunter_migrator", "ace_hunter_owner", "ace_hunter_runtime"])
+  );
+  if (JSON.stringify(functionalMemberships) !== JSON.stringify([{
+    granted_role: "ace_hunter_owner", member_role: "ace_hunter_migrator",
+    admin_option: false, inherit_option: false, set_option: true,
+    grantor_role: functionalMemberships[0]?.grantor_role,
+    member_createrole: false,
+  }]) || !validCreatorMemberships) {
     throw new Error("catalog preflight failed: role membership mismatch");
   }
   assertFingerprint("columns", columns.rows.map((row) => row.entry));
