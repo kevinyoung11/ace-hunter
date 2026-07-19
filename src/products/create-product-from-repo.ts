@@ -15,6 +15,7 @@ export interface ProductFromRepoResult {
   repositoryId: string;
   capacity: "ok" | "warning" | "reviewed";
   created: boolean;
+  repositoryCreated: boolean;
   trackedCount: number;
 }
 
@@ -118,7 +119,7 @@ async function persistProductFromRepo(
   const capacity = creating && options.reviewedCapacityOverride === true
     ? "reviewed" as const
     : newCount >= 800 ? "warning" as const : "ok" as const;
-  if (linked.rows[0]) return { productId: linked.rows[0].product_id, repositoryId, capacity, created: false, trackedCount: newCount };
+  if (linked.rows[0]) return { productId: linked.rows[0].product_id, repositoryId, capacity, created: false, repositoryCreated: creating, trackedCount: newCount };
 
   const productStore = new ProductStore(client);
   const productId = await productStore.create({
@@ -134,7 +135,7 @@ async function persistProductFromRepo(
     productId, repositoryId, role: "primary", isPrimary: true,
     confidence: 1, linkSource: "github_discovery",
   });
-  return { productId, repositoryId, capacity, created: true, trackedCount: newCount };
+  return { productId, repositoryId, capacity, created: true, repositoryCreated: creating, trackedCount: newCount };
 }
 
 function validDate(value: Date): boolean { return Number.isFinite(value.getTime()); }

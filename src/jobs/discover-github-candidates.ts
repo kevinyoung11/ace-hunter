@@ -119,7 +119,7 @@ async function discoverWithOperation(
       continue;
     }
     succeeded += 1;
-    if (created.created && created.trackedCount >= 800) {
+    if (created.repositoryCreated && created.trackedCount >= 800) {
       try { await dependencies.emitOperationalEvent({ code: "capacity_warning", trackedCount: created.trackedCount }); }
       catch { /* best-effort structured log; durable evidence is in the committed snapshot */ }
     }

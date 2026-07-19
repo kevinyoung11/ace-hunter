@@ -967,7 +967,7 @@ git commit -m "feat: discover github candidate repositories"
 - Create: `tests/contract/fixtures/trending/weekly.html`
 - Create: `tests/contract/fixtures/trending/monthly.html`
 
-- [ ] **Step 1: Write a failing structural parser test**
+- [x] **Step 1: Write a failing structural parser test**
 
 ```ts
 // tests/unit/sources/trending/parse-trending.test.ts
@@ -983,13 +983,13 @@ it("rejects structural breakage instead of returning an empty ranking", () => {
 });
 ```
 
-- [ ] **Step 2: Run RED Trending tests**
+- [x] **Step 2: Run RED Trending tests**
 
 Run: `npm test -- --run tests/unit/sources/trending/parse-trending.test.ts`
 
 Expected: FAIL because the parser module does not exist.
 
-- [ ] **Step 3: Implement parser, adapter, and collection job**
+- [x] **Step 3: Implement parser, adapter, and collection job**
 
 First create `tests/integration/jobs/collect-github-trending.test.ts`. With a fake source returning Daily/Weekly/Monthly rows, its core assertions are: all three `parameters.period` values create independently timestamped batches; one failed enrichment yields `partial` plus persisted successful rows; retrying the same scheduled bucket leaves row and `job_runs` counts unchanged; a parser failure persists no ranking rows and a failed Job. The file imports `collectGithubTrending` from the still-missing production module.
 
@@ -1033,15 +1033,15 @@ export function parseTrending(html: string): TrendingEntry[] {
 }
 ```
 
-`github-trending-source.ts` fetches `https://github.com/trending?since=<period>` and adds an encoded language path only when language is not `all`. It rejects non-2xx responses and delegates to `parseTrending`. `collect-github-trending.ts` enriches each entry through `GitHubSource.getRepository`, creates missing Product/Repository pairs, and upserts one batch timestamp for all rows. If any row fails enrichment, Job status is `partial`; if parsing fails, it writes no ranking rows and Job status is `failed`.
+`github-trending-source.ts` fetches only `https://github.com/trending?since=<period>` in V0.1. The `language` column is reserved for a later language-ranking design, so every value except `all` is rejected before network access. The adapter enforces canonical origin, English response text, redirect refusal, timeout, bounded streamed HTML, strict UTF-8, and structural parsing. `collect-github-trending.ts` parses before opening one independent GitHub operation, enriches every valid entry through `GitHubSource.getRepository`, creates missing Product/Repository pairs plus the new Repository's first core Snapshot in one transaction, and atomically replaces one deterministic UTC-hour batch. Item-level missing/invalid repositories yield `partial`; systemic source, capacity, close, or persistence failures write no ranking batch. An all-item failure preserves any prior batch for the same bucket.
 
-- [ ] **Step 4: Run GREEN Trending checks**
+- [x] **Step 4: Run GREEN Trending checks**
 
 Run: `ACE_TEST_DATABASE_URL=$ACE_TEST_DATABASE_URL npm test -- --run tests/unit/sources/trending tests/integration/jobs/collect-github-trending.test.ts && npm run typecheck && npm run lint`
 
 Expected: all three period fixtures, structural failure, rank uniqueness, missing Repo enrichment, and idempotent retry tests PASS.
 
-- [ ] **Step 5: Commit Task 5**
+- [x] **Step 5: Commit Task 5**
 
 ```bash
 git add src/sources/trending src/jobs/collect-github-trending.ts tests/unit/sources/trending tests/integration/jobs/collect-github-trending.test.ts tests/contract/fixtures/trending
