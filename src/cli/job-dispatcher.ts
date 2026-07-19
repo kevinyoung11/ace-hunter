@@ -105,12 +105,12 @@ async function dispatch(
       return withXCleanup(dependencies, () => runProductBatch(dependencies.pool, runner, input, context, "collect_x_posts",
         (productId) => collectXPosts({ pool: dependencies.pool, source: dependencies.xSource }, {
           productId, observedAt: context.scheduledFor,
-        })));
+        }), "collect"));
     case "analyze_x_posts":
       return withXCleanup(dependencies, () => runProductBatch(dependencies.pool, runner, input, context, "analyze_x_posts",
         (productId) => analyzeXPosts({ pool: dependencies.pool, analyzer: requireAnalyzer(dependencies.analyzer) }, {
           productId, observedAt: context.scheduledFor,
-        })));
+        }), "downstream"));
     case "collect_x_comments": {
       const lineage = await loadOrFreezeCommentLineage(dependencies.pool, context.runId, input.parameters);
       return withXCleanup(dependencies, () => runProductBatch(dependencies.pool, runner, input, context, "collect_x_comments",
@@ -119,6 +119,7 @@ async function dispatch(
           source: dependencies.xSource,
           analyzer: requireAnalyzer(dependencies.analyzer),
         }, { productId, observedAt: context.scheduledFor, rootPostIds: lineage.rootPostIds }),
+        "downstream",
         lineage.productIds,
         { product_ids: lineage.productIds, root_post_ids: lineage.rootPostIds }));
     }
@@ -163,6 +164,7 @@ async function runProductBatch(
   parentContext: JobContext,
   name: string,
   handler: (productId: string) => Promise<JobResult>,
+  selectionPhase: XBatchPhase,
   productIdsOverride?: readonly string[],
   frozenParameters: Record<string, unknown> = {},
 ): Promise<JobResult> {
@@ -170,9 +172,7 @@ async function runProductBatch(
     return handler(parentInput.parameters.productId);
   }
   const productIds = productIdsOverride === undefined
-    ? (await pool.query<{ id: string }>(
-        "select id from ace_hunter.products where status='active' order by id",
-      )).rows.map((row) => row.id)
+    ? await selectXBatchProductIds(pool, selectionPhase)
     : [...productIdsOverride];
   const failed: Array<{ id: string; code: string }> = [];
   let succeeded = 0;
@@ -215,9 +215,7 @@ async function loadOrFreezeCommentLineage(
       rootPostIds: parameters.root_post_ids.filter((value): value is string => typeof value === "string"),
     };
   }
-  const activeProductIds = (await pool.query<{ id: string }>(
-    "select id from ace_hunter.products where status='active' order by id",
-  )).rows.map((row) => row.id);
+  const activeProductIds = await selectXBatchProductIds(pool, "downstream");
   const roots = await selectedCommentRoots(pool, activeProductIds);
   const productIds = [...new Set(roots.map((row) => row.product_id))];
   const rootPostIds = [...new Set(roots.map((row) => row.x_post_id))];
@@ -226,6 +224,26 @@ async function loadOrFreezeCommentLineage(
   [runId, JSON.stringify({ product_ids: productIds, root_post_ids: rootPostIds })]);
   if (updated.rowCount !== 1) throw new JobError("invalid_data", false, "comment lineage write conflict");
   return { productIds, rootPostIds };
+}
+
+const xBatchSize = 3;
+type XBatchPhase = "collect" | "downstream";
+
+export async function selectXBatchProductIds(
+  pool: Pick<Pool, "query">,
+  phase: XBatchPhase,
+): Promise<string[]> {
+  const attemptedPredicate = phase === "downstream" ? "and p.x_last_attempted_at is not null" : "";
+  const attemptOrder = phase === "collect"
+    ? "p.x_last_attempted_at asc nulls first,p.updated_at desc"
+    : "p.x_last_attempted_at desc";
+  const result = await pool.query<{ id: string }>(`select p.id from ace_hunter.products p
+    where p.status='active' ${attemptedPredicate}
+    order by exists(select 1 from ace_hunter.user_product_monitors m
+      where m.product_id=p.id and m.status='active') desc,
+      ${attemptOrder},p.id
+    limit $1`, [xBatchSize]);
+  return result.rows.slice(0, xBatchSize).map((row) => row.id);
 }
 
 async function selectedCommentRoots(
