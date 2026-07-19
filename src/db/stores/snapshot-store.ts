@@ -72,15 +72,42 @@ export class SnapshotStore {
          $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19::jsonb
        )
        on conflict (repository_id,captured_at,granularity) do update set
-         stars=excluded.stars,forks=excluded.forks,commits_30d=excluded.commits_30d,
-         pr_total=excluded.pr_total,pr_open=excluded.pr_open,pr_merged=excluded.pr_merged,
-         releases_count=excluded.releases_count,latest_release_at=excluded.latest_release_at,
-         latest_release_tag=excluded.latest_release_tag,issues_total=excluded.issues_total,
-         issues_open=excluded.issues_open,issues_closed=excluded.issues_closed,
-         aux_metrics_captured_at=excluded.aux_metrics_captured_at,
-         candidate_buckets=excluded.candidate_buckets,
-         candidate_rule_version=excluded.candidate_rule_version,
-         collected_fields=excluded.collected_fields
+         stars=case when repository_snapshots.collected_fields?'observed_at' and
+           (not excluded.collected_fields?'observed_at' or excluded.collected_fields->>'observed_at'<repository_snapshots.collected_fields->>'observed_at')
+           then repository_snapshots.stars else excluded.stars end,
+         forks=case when repository_snapshots.collected_fields?'observed_at' and
+           (not excluded.collected_fields?'observed_at' or excluded.collected_fields->>'observed_at'<repository_snapshots.collected_fields->>'observed_at')
+           then repository_snapshots.forks else excluded.forks end,
+         commits_30d=case when excluded.aux_metrics_captured_at is not null and
+           (repository_snapshots.aux_metrics_captured_at is null or excluded.aux_metrics_captured_at>=repository_snapshots.aux_metrics_captured_at) then excluded.commits_30d else repository_snapshots.commits_30d end,
+         pr_total=case when excluded.aux_metrics_captured_at is not null and (repository_snapshots.aux_metrics_captured_at is null or excluded.aux_metrics_captured_at>=repository_snapshots.aux_metrics_captured_at) then excluded.pr_total else repository_snapshots.pr_total end,
+         pr_open=case when excluded.aux_metrics_captured_at is not null and (repository_snapshots.aux_metrics_captured_at is null or excluded.aux_metrics_captured_at>=repository_snapshots.aux_metrics_captured_at) then excluded.pr_open else repository_snapshots.pr_open end,
+         pr_merged=case when excluded.aux_metrics_captured_at is not null and (repository_snapshots.aux_metrics_captured_at is null or excluded.aux_metrics_captured_at>=repository_snapshots.aux_metrics_captured_at) then excluded.pr_merged else repository_snapshots.pr_merged end,
+         releases_count=case when excluded.aux_metrics_captured_at is not null and (repository_snapshots.aux_metrics_captured_at is null or excluded.aux_metrics_captured_at>=repository_snapshots.aux_metrics_captured_at) then excluded.releases_count else repository_snapshots.releases_count end,
+         latest_release_at=case when excluded.aux_metrics_captured_at is not null and (repository_snapshots.aux_metrics_captured_at is null or excluded.aux_metrics_captured_at>=repository_snapshots.aux_metrics_captured_at) then excluded.latest_release_at else repository_snapshots.latest_release_at end,
+         latest_release_tag=case when excluded.aux_metrics_captured_at is not null and (repository_snapshots.aux_metrics_captured_at is null or excluded.aux_metrics_captured_at>=repository_snapshots.aux_metrics_captured_at) then excluded.latest_release_tag else repository_snapshots.latest_release_tag end,
+         issues_total=case when excluded.aux_metrics_captured_at is not null and (repository_snapshots.aux_metrics_captured_at is null or excluded.aux_metrics_captured_at>=repository_snapshots.aux_metrics_captured_at) then excluded.issues_total else repository_snapshots.issues_total end,
+         issues_open=case when excluded.aux_metrics_captured_at is not null and (repository_snapshots.aux_metrics_captured_at is null or excluded.aux_metrics_captured_at>=repository_snapshots.aux_metrics_captured_at) then excluded.issues_open else repository_snapshots.issues_open end,
+         issues_closed=case when excluded.aux_metrics_captured_at is not null and (repository_snapshots.aux_metrics_captured_at is null or excluded.aux_metrics_captured_at>=repository_snapshots.aux_metrics_captured_at) then excluded.issues_closed else repository_snapshots.issues_closed end,
+         aux_metrics_captured_at=case when excluded.aux_metrics_captured_at is not null and (repository_snapshots.aux_metrics_captured_at is null or excluded.aux_metrics_captured_at>=repository_snapshots.aux_metrics_captured_at) then excluded.aux_metrics_captured_at else repository_snapshots.aux_metrics_captured_at end,
+         candidate_buckets=case when excluded.candidate_rule_version is null then repository_snapshots.candidate_buckets else excluded.candidate_buckets end,
+         candidate_rule_version=coalesce(excluded.candidate_rule_version,repository_snapshots.candidate_rule_version),
+         collected_fields=repository_snapshots.collected_fields || excluded.collected_fields ||
+           case when repository_snapshots.collected_fields?'observed_at' and
+             (not excluded.collected_fields?'observed_at' or excluded.collected_fields->>'observed_at'<repository_snapshots.collected_fields->>'observed_at')
+           then jsonb_strip_nulls(jsonb_build_object(
+             'observed_at',repository_snapshots.collected_fields->'observed_at',
+             'source_job_run_id',repository_snapshots.collected_fields->'source_job_run_id'
+           )) else '{}'::jsonb end ||
+           case when excluded.aux_metrics_captured_at is null or repository_snapshots.aux_metrics_captured_at is not null and (
+             excluded.aux_metrics_captured_at<repository_snapshots.aux_metrics_captured_at or
+             excluded.aux_metrics_captured_at=repository_snapshots.aux_metrics_captured_at and excluded.collected_fields->>'aux_reused'='true')
+           then jsonb_strip_nulls(jsonb_build_object(
+             'aux',repository_snapshots.collected_fields->'aux',
+             'aux_reused',repository_snapshots.collected_fields->'aux_reused',
+             'aux_window_start',repository_snapshots.collected_fields->'aux_window_start',
+             'aux_window_end',repository_snapshots.collected_fields->'aux_window_end'
+           )) else '{}'::jsonb end
        returning id,repository_id,captured_at,granularity,stars,forks,commits_30d,
          pr_total,pr_open,pr_merged,releases_count,issues_total,issues_open,issues_closed`,
       [

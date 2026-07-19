@@ -55,6 +55,8 @@ export const githubRateLimitSchema = z.object({
       remaining: z.number().int().nonnegative(),
       reset: z.number().int().nonnegative(),
     }).passthrough(),
+    core: z.object({ remaining: z.number().int().nonnegative(), reset: z.number().int().nonnegative() }).passthrough().optional(),
+    graphql: z.object({ remaining: z.number().int().nonnegative(), reset: z.number().int().nonnegative() }).passthrough().optional(),
   }).passthrough(),
 }).passthrough();
 

@@ -61,6 +61,37 @@ export interface GitHubSourceFactory {
   openOperation(): GitHubSourceOperation | Promise<GitHubSourceOperation>;
 }
 
+export interface CoreMetrics {
+  stars: number;
+  forks: number;
+  metadata: GitHubRepository;
+  capturedAt: Date;
+}
+
+export interface AuxMetrics {
+  commits30d: number;
+  prTotal: number;
+  prOpen: number;
+  prMerged: number;
+  releasesCount: number;
+  latestReleaseAt: Date | null;
+  latestReleaseTag: string | null;
+  issuesTotal: number;
+  issuesOpen: number;
+  issuesClosed: number;
+  capturedAt: Date;
+}
+
+export interface GitHubMetricSourceOperation extends GitHubSourceOperation {
+  getMetricRateLimit(): Promise<{ coreRemaining: number; graphqlRemaining: number; resetAt: Date }>;
+  getCoreMetrics(fullName: string, capturedAt: Date): Promise<CoreMetrics>;
+  getAuxMetrics(fullName: string, defaultBranch: string, capturedAt: Date): Promise<AuxMetrics>;
+}
+
+export interface GitHubMetricSourceFactory {
+  openOperation(): GitHubMetricSourceOperation | Promise<GitHubMetricSourceOperation>;
+}
+
 export class GitHubSourceError extends Error {
   public constructor(public readonly code: string) {
     super(code);

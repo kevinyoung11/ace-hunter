@@ -91,6 +91,7 @@ const allowedItemErrorCodes = new Set([
   "source_unavailable",
   "not_found",
   "invalid_data",
+  "aux_budget_exhausted",
   "duplicate",
   "item_failed",
 ]);

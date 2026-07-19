@@ -1060,7 +1060,7 @@ git commit -m "feat: collect github trending snapshots"
 - Test: `tests/integration/jobs/refresh-repo-metrics.test.ts`
 - Test: `tests/integration/jobs/retention.test.ts`
 
-- [ ] **Step 1: Write failing metric timing tests**
+- [x] **Step 1: Write failing metric timing tests**
 
 ```ts
 // tests/unit/sources/github/metrics-reader.test.ts
@@ -1097,13 +1097,13 @@ it("creates a daily survivor before deleting hourly facts older than 90 days", a
 });
 ```
 
-- [ ] **Step 2: Run RED metric tests**
+- [x] **Step 2: Run RED metric tests**
 
 Run: `ACE_TEST_DATABASE_URL=$ACE_TEST_DATABASE_URL npm test -- --run tests/unit/sources/github/metrics-reader.test.ts tests/integration/jobs/refresh-repo-metrics.test.ts tests/integration/jobs/retention.test.ts`
 
 Expected: RED for missing metric reader, refresh job, and retention job; each test file must fail for its own missing production module before implementation.
 
-- [ ] **Step 3: Implement exact metric contracts and refresh behavior**
+- [x] **Step 3: Implement exact metric contracts and refresh behavior**
 
 ```ts
 // additions to src/sources/github/github-source.ts
@@ -1125,9 +1125,9 @@ export function normalizeMetrics(input: { issuesOpen?: number }) {
 }
 ```
 
-`GitHubSource.getCoreMetrics` reads Repository metadata, Stars, and Forks. `getAuxMetrics` reads commits on the default branch since `capturedAt - 30 days`, all PR counts with merged as a subset, issues with Pull Requests excluded, and published non-draft Releases. Pagination continues until exhausted. `refresh-repo-metrics.ts` rounds scheduled snapshots to the UTC hour, reuses the same bucket on retry, refreshes Aux only when stale, carries prior Aux values with the prior `aux_metrics_captured_at`, and marks an item partial when request budget permits Core but not Aux. Realtime snapshots use the actual timestamp and `granularity='realtime'`.
+`GitHubSource.getCoreMetrics` reads Repository metadata, Stars, and Forks. `getAuxMetrics` reads commits on the default branch since `capturedAt - 30 days`, mutually exclusive OPEN/CLOSED/MERGED PR counts, issues with Pull Requests excluded, and published non-draft Releases including prereleases. Release pagination is complete up to a deliberate 1,000-item safety boundary; larger repositories fail that Aux item closed instead of storing a truncated count. `refresh-repo-metrics.ts` fixes the observation time at job start, accepts an hourly run only in the same UTC hour as `scheduledFor`, reuses the scheduled UTC bucket on retry, refreshes Aux only when stale, carries prior Aux values with the prior `aux_metrics_captured_at`, and marks an item partial when request budget permits Core but not Aux. Realtime snapshots use the actual observation timestamp and `granularity='realtime'`. Snapshot upserts independently enforce monotonic Core observation time and Aux capture time, so an older response cannot overwrite newer evidence in the same bucket.
 
-- [ ] **Step 4: Add retention safety behavior**
+- [x] **Step 4: Add retention safety behavior**
 
 ```ts
 // src/jobs/retention.ts
@@ -1143,11 +1143,13 @@ export async function compactSnapshots(pool: Pool, now: Date): Promise<number> {
 }
 ```
 
-- [ ] **Step 5: Run GREEN metric and retention checks**
+- [x] **Step 5: Run GREEN metric and retention checks**
 
 Run: `ACE_TEST_DATABASE_URL=$ACE_TEST_DATABASE_URL npm test -- --run tests/unit/sources/github/metrics-reader.test.ts tests/integration/jobs/refresh-repo-metrics.test.ts tests/integration/jobs/retention.test.ts && npm run typecheck && npm run lint`
 
 Expected: exact 30-day boundary, default-branch-only commits, PR/Issue separation, draft Release exclusion, stale Aux reuse, bucket retry, Core-first budget, and safe compaction tests PASS.
+
+Actual: focused PostgreSQL tests, the full local suite, typecheck, lint, build, and `git diff --check` passed. The opt-in live contract also read `github/docs` through real GitHub Core REST and GraphQL endpoints and verified metric invariants. Retention uses one advisory-locked transaction, exact `now - 90 days`, UTC daily buckets, late-arrival replacement, and preserves running Job Runs.
 
 - [ ] **Step 6: Commit Task 6**
 

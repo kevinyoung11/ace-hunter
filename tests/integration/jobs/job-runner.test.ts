@@ -190,6 +190,25 @@ describe("JobRunner", () => {
     if (jobResult.failed.length) expect(row.failed_items[0]).toMatchObject({ id: "b" });
   });
 
+  it("persists auxiliary budget exhaustion as a typed partial item failure", async () => {
+    const result = await runner().run(
+      { ...baseInput, parameters: { auxiliaryBudget: "exhausted" } },
+      async () => ({
+        expected: 2,
+        succeeded: 1,
+        failed: [{ id: "repository-id", code: "aux_budget_exhausted" }],
+        skipped: 0,
+      }),
+    );
+    expect(result.status).toBe("partial");
+    expect((await runtimePool.query(
+      "select failed_items from ace_hunter.job_runs where id=$1",
+      [result.runId],
+    )).rows[0].failed_items).toEqual([
+      { id: "repository-id", code: "aux_budget_exhausted" },
+    ]);
+  });
+
   it.each([
     { expected: 2, succeeded: 1, failed: [], skipped: 0 },
     { expected: -1, succeeded: 0, failed: [], skipped: 0 },
