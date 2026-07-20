@@ -64,8 +64,10 @@ export interface CliRuntime {
   close(): Promise<void>;
 }
 
+type RuntimeEnvironment = Record<string, string | undefined>;
+
 export function createLazyProductionCliRuntime(
-  env: NodeJS.ProcessEnv,
+  env: RuntimeEnvironment,
   io: CliIo = processIo,
 ): CliRuntime {
   let fullRuntime: Promise<CliRuntime> | undefined;
@@ -102,7 +104,7 @@ export function createLazyProductionCliRuntime(
 }
 
 async function createReadonlyProductionCliRuntime(
-  env: NodeJS.ProcessEnv,
+  env: RuntimeEnvironment,
   io: CliIo,
 ): Promise<CliRuntime> {
   const config = loadReadonlyRuntimeConfig(env);
@@ -134,7 +136,7 @@ async function createReadonlyProductionCliRuntime(
 }
 
 async function createProductionCliRuntime(
-  env: NodeJS.ProcessEnv,
+  env: RuntimeEnvironment,
   io: CliIo,
 ): Promise<CliRuntime> {
   const config = loadRuntimeConfig(env);
