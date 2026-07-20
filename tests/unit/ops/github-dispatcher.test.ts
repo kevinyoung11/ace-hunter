@@ -1,0 +1,7 @@
+import { describe, expect, it, vi } from "vitest";
+import { GitHubDispatcher, dispatchGitHubWorkflow } from "../../../src/ops/github-dispatcher.js";
+describe("GitHub dispatcher",()=>{
+ it("dispatches catalog workflow with only command_id",async()=>{const request=vi.fn(async()=>new Response(null,{status:204})); const commandId="11111111-1111-4111-8111-111111111111"; await dispatchGitHubWorkflow({owner:"o",repo:"r",token:"secret",request},{workflow:"trending.yml",commandId}); expect(request).toHaveBeenCalledWith("https://api.github.com/repos/o/r/actions/workflows/trending.yml/dispatches",expect.objectContaining({method:"POST",body:JSON.stringify({ref:"main",inputs:{command_id:commandId}})}));});
+ it("returns stable dispatch errors and never includes token",async()=>{const request=vi.fn(async()=>new Response("token=secret",{status:500})); const commandId="22222222-2222-4222-8222-222222222222"; await expect(dispatchGitHubWorkflow({owner:"o",repo:"r",token:"secret",request},{workflow:"x.yml",commandId})).rejects.toMatchObject({code:"github_dispatch_failed"}); await expect(dispatchGitHubWorkflow({owner:"o",repo:"r",token:"secret",request},{workflow:"x.yml",commandId})).rejects.not.toThrow("secret");});
+ it("validates workflow and command id before calling GitHub",async()=>{const request=vi.fn(); const dispatcher=new GitHubDispatcher({owner:"o",repo:"r",token:"secret",request}); await expect(dispatcher.dispatch({workflow:"../bad",commandId:"not-a-command"})).rejects.toMatchObject({code:"validation_error"}); expect(request).not.toHaveBeenCalled();});
+});

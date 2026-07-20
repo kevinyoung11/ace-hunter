@@ -1,0 +1,27 @@
+name: trigger ops scheduler tick
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  tick:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Call the Vercel ops tick endpoint
+        env:
+          OPS_TICK_URL: ${{ secrets.ACE_HUNTER_OPS_TICK_URL }}
+          OPS_TICK_SECRET: ${{ secrets.ACE_HUNTER_OPS_TICK_SECRET }}
+        run: |
+          test -n "$OPS_TICK_URL"
+          test -n "$OPS_TICK_SECRET"
+          curl --fail-with-body --silent --show-error --max-time 30 \
+            -X POST "$OPS_TICK_URL" \
+            -H 'content-type: application/json' \
+            -H "authorization: Bearer $OPS_TICK_SECRET" \
+            --data '{"source":"github-actions"}'
