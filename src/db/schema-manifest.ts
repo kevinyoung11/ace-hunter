@@ -227,7 +227,7 @@ export async function assertCatalogIsAbsentOrComplete(
     owner: string;
   }>(
     `select c.relname,c.relkind,c.relpersistence,pg_get_userbyid(c.relowner) owner
-       from pg_class c join pg_namespace n on n.oid=c.relnamespace
+       from pg_catalog.pg_class c join pg_catalog.pg_namespace n on n.oid=c.relnamespace
       where n.nspname='ace_hunter' and c.relname not in ('schema_migrations','job_definitions','job_commands','worker_heartbeats','ops_audit_log')
         and c.relkind in ('r','v','m','f','p') order by 1`,
   );
@@ -249,7 +249,7 @@ export async function assertCatalogIsAbsentOrComplete(
 
   const controlRelations = await client.query<{ relname: string; owner: string }>(
     `select c.relname,pg_get_userbyid(c.relowner) owner
-       from pg_class c join pg_namespace n on n.oid=c.relnamespace
+       from pg_catalog.pg_class c join pg_catalog.pg_namespace n on n.oid=c.relnamespace
       where n.nspname='ace_hunter' and c.relkind='r' and c.relname = any($1::text[]) order by 1`,
     [controlPlaneTables],
   );
