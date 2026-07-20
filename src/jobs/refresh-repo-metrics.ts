@@ -3,6 +3,7 @@ import { utcHourBucket } from "../core/time-buckets.js";
 import { RepositoryStore } from "../db/stores/repository-store.js";
 import { SnapshotStore, type SnapshotInput } from "../db/stores/snapshot-store.js";
 import type { Queryable } from "../db/stores/queryable.js";
+import { candidateBuckets, candidateRuleVersion } from "../sources/github/candidate-rules.js";
 import { needsAuxRefresh } from "../sources/github/metrics-reader.js";
 import { GitHubSourceError, type GitHubMetricSourceFactory, type GitHubMetricSourceOperation } from "../sources/github/github-source.js";
 import { JobError, type JobResult } from "./job-runner.js";
@@ -22,7 +23,7 @@ interface PriorAux {
   commits30d: number | null; prTotal: number | null; prOpen: number | null; prMerged: number | null;
   releasesCount: number | null; latestReleaseAt: Date | null; latestReleaseTag: string | null;
   issuesTotal: number | null; issuesOpen: number | null; issuesClosed: number | null;
-  auxMetricsCapturedAt: Date | null; candidateBuckets: string[]; candidateRuleVersion: string | null;
+  auxMetricsCapturedAt: Date | null;
 }
 interface Prepared { repository: RepositoryRow; snapshot: SnapshotInput; due: boolean }
 
@@ -105,13 +106,13 @@ async function refreshWithOperation(
       });
       if (persistedId !== repository.id) throw new GitHubSourceError("repository_identity_mismatch");
       const due = options.granularity === "realtime" || needsAuxRefresh(prior.auxMetricsCapturedAt, observedAt);
+      const buckets = candidateBuckets({ createdAt: metadata.createdAt, stars: core.stars }, observedAt);
       const snapshot: SnapshotInput = {
         repositoryId: repository.id, capturedAt, granularity: options.granularity, stars: core.stars, forks: core.forks,
         commits30d: prior.commits30d, prTotal: prior.prTotal, prOpen: prior.prOpen, prMerged: prior.prMerged,
         releasesCount: prior.releasesCount, latestReleaseAt: prior.latestReleaseAt, latestReleaseTag: prior.latestReleaseTag,
         issuesTotal: prior.issuesTotal, issuesOpen: prior.issuesOpen, issuesClosed: prior.issuesClosed,
-        auxMetricsCapturedAt: prior.auxMetricsCapturedAt, candidateBuckets: prior.candidateBuckets,
-        candidateRuleVersion: prior.candidateRuleVersion,
+        auxMetricsCapturedAt: prior.auxMetricsCapturedAt, candidateBuckets: buckets, candidateRuleVersion,
         collectedFields: { core: true, aux: prior.auxMetricsCapturedAt !== null, aux_reused: prior.auxMetricsCapturedAt !== null,
           source_job_run_id: options.runId ?? null, observed_at: observedAt.toISOString(),
           metadata: {
@@ -185,18 +186,17 @@ async function readRepositories(pool: Pool, ids?: string[]): Promise<RepositoryR
 
 async function readPriorAux(pool: Queryable, repositoryId: string, capturedAt: Date): Promise<PriorAux> {
   const result = await pool.query(`select commits_30d,pr_total,pr_open,pr_merged,releases_count,latest_release_at,
-      latest_release_tag,issues_total,issues_open,issues_closed,aux_metrics_captured_at,candidate_buckets,candidate_rule_version
+      latest_release_tag,issues_total,issues_open,issues_closed,aux_metrics_captured_at
     from ace_hunter.repository_snapshots where repository_id=$1 and captured_at<=$2
     order by aux_metrics_captured_at desc nulls last,captured_at desc limit 1`, [repositoryId, capturedAt]);
   const row = result.rows[0];
   return row ? { commits30d: row.commits_30d, prTotal: row.pr_total, prOpen: row.pr_open, prMerged: row.pr_merged,
     releasesCount: row.releases_count, latestReleaseAt: row.latest_release_at, latestReleaseTag: row.latest_release_tag,
     issuesTotal: row.issues_total, issuesOpen: row.issues_open, issuesClosed: row.issues_closed,
-    auxMetricsCapturedAt: row.aux_metrics_captured_at, candidateBuckets: row.candidate_buckets,
-    candidateRuleVersion: row.candidate_rule_version } : {
+    auxMetricsCapturedAt: row.aux_metrics_captured_at } : {
     commits30d: null, prTotal: null, prOpen: null, prMerged: null, releasesCount: null,
     latestReleaseAt: null, latestReleaseTag: null, issuesTotal: null, issuesOpen: null, issuesClosed: null,
-    auxMetricsCapturedAt: null, candidateBuckets: [], candidateRuleVersion: null,
+    auxMetricsCapturedAt: null,
   };
 }
 

@@ -4,7 +4,8 @@ import { SnapshotStore } from "../db/stores/snapshot-store.js";
 import { createProductFromRepo, type CapacityReviewOptions, type ProductFromRepoResult } from "../products/create-product-from-repo.js";
 import type { GitHubRepository, GitHubSource, GitHubSourceFactory } from "../sources/github/github-source.js";
 import { GitHubSourceError } from "../sources/github/github-source.js";
-import { candidateBuckets, searchCompletely } from "../sources/github/repository-search.js";
+import { candidateBuckets, candidateRules, candidateRuleVersion } from "../sources/github/candidate-rules.js";
+import { searchCompletely } from "../sources/github/repository-search.js";
 import { JobError, type JobResult } from "./job-runner.js";
 
 export interface OperationalEvent { code: "capacity_warning"; trackedCount: number }
@@ -14,8 +15,6 @@ export interface DiscoverGithubDependencies {
   emitOperationalEvent: (event: OperationalEvent) => void | Promise<void>;
 }
 export interface DiscoverGithubOptions extends CapacityReviewOptions { runId?: string; maxNew?: number }
-
-const day = 86_400_000;
 
 export async function discoverGithubCandidates(
   dependencies: DiscoverGithubDependencies,
@@ -56,10 +55,9 @@ async function discoverWithOperation(
   catch (error) { throw toJobError(error); }
   if (rateLimit.remaining < 1) throw new JobError("rate_limit", true, "github search rate limited");
 
-  const rules = [
-    { from: new Date(searchAt.getTime() - day), to: searchAt, minStars: 10 },
-    { from: new Date(searchAt.getTime() - 3 * day), to: searchAt, minStars: 100 },
-  ];
+  const rules = candidateRules.map((rule) => ({
+    from: new Date(searchAt.getTime() - rule.maximumAgeMs), to: searchAt, minStars: rule.minimumStars,
+  }));
   const found = new Map<number, GitHubRepository>();
   try {
     for (const rule of rules) {
@@ -111,7 +109,7 @@ async function discoverWithOperation(
           repositoryId: persisted.repositoryId, capturedAt: utcHourBucket(at), granularity: "hourly",
           stars: repository.stars, forks: repository.forks, commits30d: null, prTotal: null,
           prOpen: null, prMerged: null, releasesCount: null, issuesTotal: null, issuesOpen: null,
-          issuesClosed: null, candidateBuckets: buckets, candidateRuleVersion: "v2",
+          issuesClosed: null, candidateBuckets: buckets, candidateRuleVersion,
           collectedFields: {
             core: true,
             source_job_run_id: options.runId ?? null,

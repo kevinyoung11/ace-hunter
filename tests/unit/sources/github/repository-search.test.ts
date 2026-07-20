@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { GitHubRepository, GitHubSource, SearchSlice } from "../../../../src/sources/github/github-source.js";
+import * as repositorySearch from "../../../../src/sources/github/repository-search.js";
 import { candidateBuckets, searchCompletely, splitSearchSlice } from "../../../../src/sources/github/repository-search.js";
 
 function repo(id: number, stars = 10): GitHubRepository {
@@ -17,6 +18,17 @@ function repo(id: number, stars = 10): GitHubRepository {
 
 describe("candidateBuckets", () => {
   const at = new Date("2026-07-19T00:00:00Z");
+
+  it("exposes the candidate-v2 rule definitions through the compatible search API", () => {
+    expect(repositorySearch).toMatchObject({
+      candidateRuleVersion: "v2",
+      maximumCandidateAgeMs: 3 * 86_400_000,
+      candidateRules: [
+        { bucket: "age_1d_stars_10", maximumAgeMs: 86_400_000, minimumStars: 10 },
+        { bucket: "age_3d_stars_100", maximumAgeMs: 3 * 86_400_000, minimumStars: 100 },
+      ],
+    });
+  });
 
   it("assigns every candidate-v2 bucket including exact boundaries", () => {
     expect(candidateBuckets({ createdAt: new Date("2026-07-18T00:00:00Z"), stars: 100 }, at))

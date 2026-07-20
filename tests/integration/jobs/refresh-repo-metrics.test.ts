@@ -111,6 +111,38 @@ describe("refreshRepoMetrics", () => {
     expect(rows.rows[0].commits_30d).toBe(55);
   });
 
+  it("recomputes candidate-v2 provenance from current Core facts instead of copying v1 snapshots", async () => {
+    const [eligibleId, ineligibleId] = await seedRepos(2);
+    const priorAt = new Date("2026-07-19T07:00:00Z");
+    for (const repositoryId of [eligibleId, ineligibleId]) {
+      await new SnapshotStore(runtimePool).insert({
+        repositoryId, capturedAt: priorAt, granularity: "hourly", stars: 1_000, forks: 1,
+        commits30d: 55, prTotal: 8, prOpen: 2, prMerged: 3, releasesCount: 4,
+        issuesTotal: 9, issuesOpen: 4, issuesClosed: 5, auxMetricsCapturedAt: priorAt,
+        candidateBuckets: ["age_7d_stars_100", "age_30d_stars_1000"], candidateRuleVersion: "v1",
+        collectedFields: { core: true, aux: true, observed_at: priorAt.toISOString() },
+      });
+    }
+    const operation = metricOperation([], async (_name, _branch, at) => aux(at, 9));
+    operation.getCoreMetrics = async (fullName, capturedAt) => ({
+      stars: 101, forks: 7,
+      metadata: { ...repo(fullName), createdAt: fullName === "owner/r1"
+        ? new Date("2026-07-18T12:40:00Z") : new Date("2026-07-01T00:00:00Z") },
+      capturedAt,
+    });
+    await refreshRepoMetrics({
+      pool: runtimePool, sourceFactory: factory(operation), now: () => new Date("2026-07-19T12:40:00Z"),
+    }, { scheduledFor: new Date("2026-07-19T12:37:00Z"), granularity: "hourly" });
+
+    const rows = (await runtimePool.query(`select repository_id,candidate_buckets,candidate_rule_version
+      from ace_hunter.repository_snapshots where captured_at='2026-07-19T12:00:00Z'
+      order by repository_id`)).rows;
+    expect(rows).toEqual([
+      { repository_id: eligibleId, candidate_buckets: ["age_1d_stars_10", "age_3d_stars_100"], candidate_rule_version: "v2" },
+      { repository_id: ineligibleId, candidate_buckets: [], candidate_rule_version: "v2" },
+    ].sort((left, right) => left.repository_id.localeCompare(right.repository_id)));
+  });
+
   it("uses actual realtime capture timestamps and isolates operations between jobs", async () => {
     await seedRepos(1);
     const first = metricOperation([], async (_name, _defaultBranch, at) => aux(at, 2));
