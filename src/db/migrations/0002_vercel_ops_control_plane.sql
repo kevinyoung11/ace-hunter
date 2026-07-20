@@ -14,6 +14,7 @@ create table ace_hunter.job_definitions (
   display_name text not null,
   executor text not null check (executor in ('github','local')),
   capability text not null,
+  workflow_file text not null,
   parameters_schema jsonb not null default '{}'::jsonb,
   enabled boolean not null default true,
   paused_at timestamptz,
@@ -62,19 +63,19 @@ create table ace_hunter.ops_audit_log (
   created_at timestamptz not null default now()
 );
 
-insert into ace_hunter.job_definitions(name, display_name, executor, capability)
+insert into ace_hunter.job_definitions(name, display_name, executor, capability, workflow_file)
 values
- ('discover_github_candidates','GitHub potential candidates','github','github.candidates'),
- ('collect_github_trending','GitHub trending','github','github.trending'),
- ('refresh_repo_metrics','Refresh repository metrics','github','github.metrics'),
- ('collect_x_posts','Collect X posts','local','x.posts.collect'),
- ('analyze_x_posts','Analyze X posts','local','x.posts.analyze'),
- ('collect_x_comments','Collect X comments','local','x.comments.collect'),
- ('generate_report','Generate report','github','reports.daily'),
- ('evaluate_success','Evaluate success','github','maintenance.evaluate'),
- ('retention','Job retention','github','maintenance.retention')
+ ('discover_github_candidates','GitHub potential candidates','github','github.candidates','discover.yml'),
+ ('collect_github_trending','GitHub trending','github','github.trending','trending.yml'),
+ ('refresh_repo_metrics','Refresh repository metrics','github','github.metrics','refresh-metrics.yml'),
+ ('collect_x_posts','Collect X posts','local','x.posts.collect','collect-x.yml'),
+ ('analyze_x_posts','Analyze X posts','local','x.posts.analyze','collect-x.yml'),
+ ('collect_x_comments','Collect X comments','local','x.comments.collect','collect-x.yml'),
+ ('generate_report','Generate report','github','reports.daily','daily-report.yml'),
+ ('evaluate_success','Evaluate success','github','maintenance.evaluate','evaluate-success.yml'),
+ ('retention','Job retention','github','maintenance.retention','retention.yml')
 on conflict (name) do update set display_name=excluded.display_name,
-  executor=excluded.executor, capability=excluded.capability, updated_at=now();
+  executor=excluded.executor, capability=excluded.capability, workflow_file=excluded.workflow_file, updated_at=now();
 
 alter table ace_hunter.job_definitions owner to ace_hunter_owner;
 alter table ace_hunter.job_commands owner to ace_hunter_owner;
@@ -104,6 +105,37 @@ create policy control_owner_audit on ace_hunter.ops_audit_log
 revoke all on ace_hunter.job_definitions, ace_hunter.job_commands,
   ace_hunter.worker_heartbeats, ace_hunter.ops_audit_log from public;
 create policy ops_job_definitions_read on ace_hunter.job_definitions for select to ace_hunter_ops using (true);
+
+create or replace function ace_hunter.create_job_command(p_job_name text, p_executor text, p_capability text, p_parameters jsonb, p_idempotency_key text, p_scheduled_for timestamptz default null)
+returns ace_hunter.job_commands language plpgsql security definer volatile
+set search_path = ace_hunter, pg_catalog as $$
+declare result ace_hunter.job_commands;
+begin
+ insert into ace_hunter.job_commands(job_name,executor,capability,parameters,idempotency_key,scheduled_for)
+ values(p_job_name,p_executor,p_capability,coalesce(p_parameters,'{}'::jsonb),p_idempotency_key,p_scheduled_for)
+ on conflict(idempotency_key) do update set idempotency_key=excluded.idempotency_key
+ returning * into result;
+ return result;
+end $$;
+
+create or replace function ace_hunter.list_job_definitions()
+returns setof ace_hunter.job_definitions language sql security definer stable
+set search_path = ace_hunter, pg_catalog as $$
+ select * from ace_hunter.job_definitions order by name
+$$;
+
+create or replace function ace_hunter.record_ops_audit(p_actor text, p_action text, p_job_name text default null, p_command_id uuid default null, p_details jsonb default '{}'::jsonb)
+returns ace_hunter.ops_audit_log language sql security definer volatile
+set search_path = ace_hunter, pg_catalog as $$
+ insert into ace_hunter.ops_audit_log(actor,action,job_name,command_id,details)
+ values($1,$2,$3,$4,coalesce($5,'{}'::jsonb)) returning *
+$$;
+
+create or replace function ace_hunter.list_ops_audit(p_limit integer default 100)
+returns setof ace_hunter.ops_audit_log language sql security definer stable
+set search_path = ace_hunter, pg_catalog as $$
+ select * from ace_hunter.ops_audit_log order by created_at desc limit greatest(0, least(coalesce($1,100), 1000))
+$$;
 
 create or replace function ace_hunter.claim_job_command(p_worker_id text, p_executor text, p_capabilities text[] default '{}')
 returns ace_hunter.job_commands language plpgsql security definer volatile
@@ -194,6 +226,9 @@ $$;
 revoke all on all functions in schema ace_hunter from public;
 grant usage on schema ace_hunter to ace_hunter_ops, ace_hunter_github_runtime, ace_hunter_mac_worker;
 grant select on ace_hunter.job_definitions to ace_hunter_ops;
+grant execute on function ace_hunter.create_job_command(text,text,text,jsonb,text,timestamptz) to ace_hunter_ops, ace_hunter_github_runtime, ace_hunter_mac_worker;
+grant execute on function ace_hunter.list_job_definitions() to ace_hunter_ops;
+grant execute on function ace_hunter.record_ops_audit(text,text,text,uuid,jsonb), ace_hunter.list_ops_audit(integer) to ace_hunter_ops, ace_hunter_github_runtime, ace_hunter_mac_worker;
 grant execute on function ace_hunter.claim_job_command(text,text,text[]) to ace_hunter_mac_worker, ace_hunter_github_runtime;
 grant execute on function ace_hunter.start_job_command(uuid,text), ace_hunter.bind_job_run(uuid,text,uuid), ace_hunter.complete_job_command(uuid,text,text,text,text) to ace_hunter_mac_worker, ace_hunter_github_runtime;
 grant execute on function ace_hunter.cancel_job_command(uuid,text), ace_hunter.requeue_job_command(uuid,text) to ace_hunter_ops;

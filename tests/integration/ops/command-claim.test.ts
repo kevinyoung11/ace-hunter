@@ -15,5 +15,16 @@ describe("command claim", () => {
   });
   it("enforces idempotency and queued-only cancellation", async () => {
     await expect(admin.query("insert into ace_hunter.job_commands(job_name,executor,capability,idempotency_key) values ('collect_x_posts','local','x.posts.collect','claim-test')")).rejects.toMatchObject({ code: "23505" });
+    const scheduled = "2030-01-01T00:00:00Z";
+    await admin.query("insert into ace_hunter.job_commands(job_name,executor,capability,idempotency_key,scheduled_for) values ('collect_x_posts','local','x.posts.collect','scheduled-a',$1)",[scheduled]);
+    await expect(admin.query("insert into ace_hunter.job_commands(job_name,executor,capability,idempotency_key,scheduled_for) values ('collect_x_posts','local','x.posts.collect','scheduled-b',$1)",[scheduled])).rejects.toMatchObject({ code: "23505" });
+    const queued = (await admin.query("select id from ace_hunter.job_commands where idempotency_key='scheduled-a'")).rows[0].id;
+    await admin.query("select * from ace_hunter.cancel_job_command($1,'ops')", [queued]);
+    await expect(admin.query("select * from ace_hunter.start_job_command($1,'worker-a')", [queued])).rejects.toMatchObject({ code: "42501" });
+  });
+  it("rejects reverse or invalid state transitions", async () => {
+    const id = (await admin.query("insert into ace_hunter.job_commands(job_name,executor,capability,idempotency_key) values ('collect_x_posts','local','x.posts.collect','reverse-test') returning id")).rows[0].id;
+    await expect(admin.query("select * from ace_hunter.bind_job_run($1,'worker-a',$2)", [id, "00000000-0000-4000-8000-000000000001"])).rejects.toMatchObject({ code: "42501" });
+    await expect(admin.query("select * from ace_hunter.complete_job_command($1,'worker-a','succeeded')", [id])).rejects.toMatchObject({ code: "42501" });
   });
 });
