@@ -43,8 +43,5 @@ jobs:
           if(!row) { console.error("job_name is not a registered GitHub job"); process.exit(1); }
           if(!row[3]) { console.error("job has no catalog workflow"); process.exit(1); }'
       - run: >-
-          node dist/src/cli/index.js job '${{ inputs.job_name }}'
-          --command-id '${{ inputs.command_id }}'
-          --orchestrator-run-id '${{ github.run_id }}'
-          --orchestrator-run-attempt '${{ github.run_attempt }}'
-          --orchestrator-workflow 'ops-command.yml'
+          node dist/src/cli/index.js command '${{ inputs.command_id }}'
+          --worker-id 'github-actions-${{ github.run_id }}'

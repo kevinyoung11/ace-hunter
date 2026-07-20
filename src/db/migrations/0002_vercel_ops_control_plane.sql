@@ -133,6 +133,12 @@ set search_path = ace_hunter, pg_catalog as $$
  select * from ace_hunter.job_definitions order by name
 $$;
 
+create or replace function ace_hunter.get_job_command(p_command_id uuid)
+returns ace_hunter.job_commands language sql security definer stable
+set search_path = ace_hunter, pg_catalog as $$
+ select * from ace_hunter.job_commands where id=$1
+$$;
+
 create or replace function ace_hunter.record_ops_audit(p_actor text, p_action text, p_job_name text default null, p_command_id uuid default null, p_details jsonb default '{}'::jsonb)
 returns ace_hunter.ops_audit_log language sql security definer volatile
 set search_path = ace_hunter, pg_catalog as $$
@@ -237,6 +243,7 @@ grant usage on schema ace_hunter to ace_hunter_ops, ace_hunter_github_runtime, a
 grant select on ace_hunter.job_definitions to ace_hunter_ops;
 grant execute on function ace_hunter.create_job_command(text,text,text,jsonb,text,timestamptz) to ace_hunter_ops, ace_hunter_github_runtime, ace_hunter_mac_worker;
 grant execute on function ace_hunter.list_job_definitions() to ace_hunter_ops;
+grant execute on function ace_hunter.get_job_command(uuid) to ace_hunter_ops, ace_hunter_github_runtime, ace_hunter_mac_worker;
 grant execute on function ace_hunter.record_ops_audit(text,text,text,uuid,jsonb), ace_hunter.list_ops_audit(integer) to ace_hunter_ops, ace_hunter_github_runtime, ace_hunter_mac_worker;
 grant execute on function ace_hunter.claim_job_command(text,text,text[]) to ace_hunter_mac_worker, ace_hunter_github_runtime;
 grant execute on function ace_hunter.start_job_command(uuid,text), ace_hunter.bind_job_run(uuid,text,uuid), ace_hunter.complete_job_command(uuid,text,text,text,text) to ace_hunter_mac_worker, ace_hunter_github_runtime;
