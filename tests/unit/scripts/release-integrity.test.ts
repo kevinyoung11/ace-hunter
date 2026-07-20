@@ -34,6 +34,21 @@ it("rejects reused release content changed after sealing", async () => {
   });
 });
 
+it("rejects content and manifest tampering together", async () => {
+  const release = join(root, "release");
+  await mkdir(release);
+  await writeFile(join(release, "app.js"), "original\n");
+  await run("seal", release, sha);
+  const trusted = (await runDigest(release)).stdout.trim();
+  await writeFile(join(release, "app.js"), "tampered\n");
+  const tamperedDigest = (await runDigest(release)).stdout.trim();
+  await writeFile(join(release, "release-manifest.json"),
+    `${JSON.stringify({ sha, content_sha256: tamperedDigest })}\n`);
+  await expect(run("verify", release, sha, trusted)).rejects.toMatchObject({
+    stderr: expect.stringContaining("release_trusted_digest_mismatch"),
+  });
+});
+
 it("rejects a release root symlink and an escaping content symlink", async () => {
   const realRelease = join(root, "real-release");
   const linkedRelease = join(root, "linked-release");
