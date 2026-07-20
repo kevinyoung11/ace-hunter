@@ -14,6 +14,7 @@ integrity_helper="${repo_root}/scripts/release-integrity.mjs"
 candidate_tmp=""
 candidate_tmp_created=0
 rollback_in_progress=0
+transaction_verified=0
 cleanup_trusted() {
   if [[ "${candidate_tmp_created:-0}" = 1 && -e "$candidate_tmp" ]]; then
     rm -rf -- "$candidate_tmp"
@@ -32,7 +33,7 @@ rollback_exit() {
 }
 rollback_on_exit() {
   local status="$?"
-  if [[ "$status" -ne 0 && "$rollback_in_progress" -eq 0 ]]; then
+  if [[ "$status" -ne 0 && "$transaction_verified" -eq 1 && "$rollback_in_progress" -eq 0 ]]; then
     rollback_in_progress=1
     trap - EXIT ERR HUP INT TERM
     cleanup_trusted
@@ -49,6 +50,7 @@ trap 'rollback_exit 143' TERM
 trap rollback_on_exit EXIT
 
 "$node_path" "$transaction_helper" verify "$transaction" >/dev/null
+transaction_verified=1
 
 git fetch --quiet origin main
 remote_main="$(git rev-parse origin/main)"
