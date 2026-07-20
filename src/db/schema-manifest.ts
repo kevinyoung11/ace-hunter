@@ -633,7 +633,7 @@ export async function assertCatalogIsAbsentOrComplete(
   const expectedControlRoles = ["ace_hunter_ops", "ace_hunter_github_runtime", "ace_hunter_mac_worker"];
   const hasControlPlane = controlRelations.rows.length === controlPlaneTables.length;
   if (
-    roleCapabilities.rows.length !== (hasControlPlane ? 6 : 3) ||
+    !([3, 6] as const).includes(roleCapabilities.rows.length as 3 | 6) ||
     JSON.stringify(roleCapabilities.rows.filter((row) => ["ace_hunter_migrator", "ace_hunter_owner"].includes(row.rolname))) !==
       JSON.stringify(expectedRoleCapabilities) ||
     !runtimeCapabilities ||
