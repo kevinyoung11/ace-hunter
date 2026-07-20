@@ -27,6 +27,7 @@ export class OpsService {
         now:async()=> (await this.pool.query<{now:Date}>("select now() as now")).rows[0].now,
         definitions:async()=>jobs.map(job=>({...job,schedule:schedules[job.name] ?? {minute:"*",hour:"*"},parameters:{}})),
         enqueue:async input=>this.commands.create({jobName:input.jobName,executor:jobs.find(j=>j.name===input.jobName)!.executor,capability:jobs.find(j=>j.name===input.jobName)!.capability,parameters:input.parameters,idempotencyKey:input.idempotencyKey,scheduledFor:input.scheduledFor}),
+        markDispatchFailed:async (commandId, code)=>{ await this.audit.record({actor:"vercel-scheduler",action:"command.dispatch_failed",commandId,details:{code}}); },
       },
       dispatch:async dispatch=>{
         const job=jobs.find(j=>j.name===dispatch.jobName); if(!job || job.executor!=="github") return;

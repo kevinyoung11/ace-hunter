@@ -3,6 +3,7 @@ import { GET as health } from "../../../app/api/ops/health/route";
 import { GET as jobs, POST as createJob } from "../../../app/api/ops/jobs/route";
 import { GET as sources } from "../../../app/api/ops/sources/route";
 import { POST as jobAction } from "../../../app/api/ops/jobs/[name]/route";
+import { POST as tick } from "../../../app/api/ops/tick/route";
 
 const env = { ...process.env };
 afterEach(() => { for (const k of ["ACE_HUNTER_OPS_DATABASE_URL","ACE_HUNTER_OPS_ORIGIN","ACE_HUNTER_OPS_API_TOKEN"]) { if (env[k] === undefined) delete process.env[k]; else process.env[k] = env[k]; } });
@@ -34,5 +35,10 @@ describe("protected ops routes", () => {
     const body = new ReadableStream<Uint8Array>({start(controller){controller.enqueue(new Uint8Array(70_000)); controller.close();}});
     const response = await createJob(new Request("https://ops.example/api/ops/jobs", {method:"POST", headers:{origin:"https://ops.example", "x-ops-token":process.env.ACE_HUNTER_OPS_API_TOKEN!, "x-csrf-token":process.env.ACE_HUNTER_OPS_API_TOKEN!, "content-type":"application/json"}, body, duplex:"half"} as RequestInit));
     expect(response.status).toBe(413); expect((await response.json()).code).toBe("request_too_large");
+  });
+  it("accepts the GitHub Actions bearer tick secret without exposing the Ops API token", async () => {
+    process.env.ACE_HUNTER_OPS_DATABASE_URL="https://db.example/ops"; process.env.ACE_HUNTER_OPS_ORIGIN="https://ops.example"; process.env.ACE_HUNTER_OPS_API_TOKEN="0123456789abcdef"; process.env.ACE_HUNTER_OPS_TICK_SECRET="tick-secret-0123456789";
+    const response = await tick(new Request("https://ops.example/api/ops/tick", { method:"POST", headers:{ authorization:"Bearer tick-secret-0123456789", "content-type":"application/json" }, body:"{}" }));
+    expect(response.status).not.toBe(401); expect(response.status).not.toBe(403);
   });
 });
