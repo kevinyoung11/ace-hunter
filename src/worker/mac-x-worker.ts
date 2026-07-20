@@ -32,8 +32,8 @@ export class MacXWorker {
   }
 
   public async tick(): Promise<WorkerTickResult> {
-    await this.options.service.heartbeat(this.options.workerId, "local", [...MAC_X_CAPABILITIES], this.options.version, { worker: "mac-x" });
-    const command = await this.options.service.claim(this.options.workerId, "local", [...MAC_X_CAPABILITIES]);
+    await retryTransient(() => this.options.service.heartbeat(this.options.workerId, "local", [...MAC_X_CAPABILITIES], this.options.version, { worker: "mac-x" }));
+    const command = await retryTransient(() => this.options.service.claim(this.options.workerId, "local", [...MAC_X_CAPABILITIES]));
     if (!command) return { processed: false, reason: "idle" };
     this.assertCommand(command);
     const started = await this.options.service.start(command.id, this.options.workerId);
@@ -81,6 +81,24 @@ export class MacXWorker {
     }
     const expected = command.jobName === "collect_x_posts" ? "x.posts.collect" : command.jobName === "analyze_x_posts" ? "x.posts.analyze" : "x.comments.collect";
     if (command.capability !== expected) throw Object.assign(new Error("worker_command_rejected"), { code: "worker_command_rejected" });
+    if (command.jobName !== "collect_x_posts") {
+      const lineage = command.parameters.lineage;
+      if (!lineage || typeof lineage !== "object" || typeof (lineage as Record<string, unknown>).parent_command_id !== "string") {
+        throw Object.assign(new Error("x_lineage_required"), { code: "x_lineage_required" });
+      }
+    }
+  }
+}
+
+async function retryTransient<T>(operation: () => Promise<T>): Promise<T> {
+  let delay = 100;
+  for (let attempt = 0; ; attempt += 1) {
+    try { return await operation(); } catch (error) {
+      const code = safeCode(error);
+      if (attempt >= 2 || !new Set(["timeout", "network_error", "connection_error", "worker_unavailable"]).has(code)) throw error;
+      await new Promise((resolve) => setTimeout(resolve, delay));
+      delay *= 2;
+    }
   }
 }
 

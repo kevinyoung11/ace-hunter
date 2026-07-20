@@ -22,6 +22,12 @@ if ! mkdir "$lock_dir" 2>/dev/null; then
     if [[ "$owner_pid" =~ ^[0-9]+$ ]] && kill -0 "$owner_pid" 2>/dev/null; then
       exit 0
     fi
+  else
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+      sleep 0.05
+      [[ -f "$owner_file" ]] && break
+    done
+    if [[ -f "$owner_file" ]]; then exit 0; fi
   fi
   rm -rf "$lock_dir"
   mkdir "$lock_dir"
@@ -33,6 +39,7 @@ trap cleanup EXIT
 trap stop HUP INT TERM
 
 worker_id="${ACE_HUNTER_WORKER_ID:-mac-${HOSTNAME:-local}-$$}"
-once_flag=""
-[[ "${1:-}" = "--once" ]] && once_flag="--once"
-"$node_path" "$release_root/dist/src/cli/index.js" worker x $once_flag --worker-id "$worker_id" --poll-seconds "${ACE_HUNTER_WORKER_POLL_SECONDS:-30}"
+worker_args=("$node_path" "$release_root/dist/src/cli/index.js" worker x)
+[[ "${1:-}" = "--once" ]] && worker_args+=("--once")
+worker_args+=(--worker-id "$worker_id" --poll-seconds "${ACE_HUNTER_WORKER_POLL_SECONDS:-30}")
+"${worker_args[@]}"

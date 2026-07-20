@@ -68,4 +68,17 @@ describe("MacXWorker", () => {
     await expect(worker.tick()).resolves.toMatchObject({ processed: true, status: "failed" });
     expect(fixture.service.complete).toHaveBeenCalledWith(command().id, "mac-1", "failed", "source_unavailable", expect.not.stringContaining("secret"));
   });
+
+  it("rejects downstream X commands without a parent lineage reference", async () => {
+    const fixture = deps({ service: { claim: vi.fn(async () => command({ jobName: "analyze_x_posts", capability: "x.posts.analyze" })) } });
+    await expect(new MacXWorker(fixture.dependencies).tick()).rejects.toMatchObject({ code: "x_lineage_required" });
+  });
+
+  it("backs off transient heartbeat/claim failures while preserving the queued command", async () => {
+    const fixture = deps();
+    fixture.service.heartbeat
+      .mockRejectedValueOnce(Object.assign(new Error("temporary"), { code: "network_error" }));
+    await expect(new MacXWorker(fixture.dependencies).tick()).resolves.toMatchObject({ processed: true });
+    expect(fixture.service.heartbeat).toHaveBeenCalledTimes(2);
+  });
 });
