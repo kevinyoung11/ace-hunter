@@ -36,6 +36,6 @@ Other routes:
 - 查看关注：`"$HOME/Library/Application Support/AceHunter/bin/ace-hunter" list`
 - 取消关注：`"$HOME/Library/Application Support/AceHunter/bin/ace-hunter" unfollow <target>`
 
-Return command output faithfully. For Trending, preserve every source URL, 榜单采集时间, Star 采集时间, `stale`, and each `available`, `unavailable`, or `not_found` state. For potential repositories, preserve source URL, Star 采集时间, and every matched 规则标签. Preserve cutoff times, model-judgment labels, `partial`, and source-unavailable states in other responses. X 不可用不能解释成零讨论.
+Return command output faithfully. For Trending, preserve every source URL, 榜单采集时间, Star 采集时间, `stale`, and each `available`, `unavailable`, or `not_found` state. For potential repositories, every displayed item must include its repository introduction (`description`, use `—` only when absent), repository URL, and homepage/demo URL when `homepageUrl` is present, in addition to Star, age, and matched 规则标签. Do not collapse these metadata fields into an omitted table column. Preserve cutoff times, model-judgment labels, `partial`, and source-unavailable states in other responses. X 不可用不能解释成零讨论.
 
 If the CLI returns `kind=ambiguous`, show every candidate and ask the user to choose. Never guess. If the deployment-managed executable is absent, state that Ace Hunter is not installed; do not substitute a worktree or globally linked development binary.
