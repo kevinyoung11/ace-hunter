@@ -42,6 +42,29 @@ describe("SkillHomepage", () => {
 });
 
 describe("TrendingBoard", () => {
+  it("exposes the period controls as linked tabs and selects the matching panel", () => {
+    render(<TrendingBoard initialItems={[]} />);
+
+    const today = screen.getByRole("tab", { name: "今日", selected: true });
+    expect(today.getAttribute("aria-controls")).toBe("trending-panel-daily");
+    expect(screen.getByRole("tabpanel").getAttribute("aria-labelledby")).toBe(today.id);
+  });
+
+  it("moves tab focus and loads the adjacent period with ArrowRight", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ items: [] }) });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<TrendingBoard initialItems={[]} />);
+
+    const today = screen.getByRole("tab", { name: "今日" });
+    today.focus();
+    fireEvent.keyDown(today, { key: "ArrowRight" });
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/trending?period=weekly"));
+    expect(document.activeElement).toBe(screen.getByRole("tab", { name: "本周", selected: true }));
+    expect(screen.getByText("02")).not.toBeNull();
+    expect(screen.getByText("Weekly stars")).not.toBeNull();
+  });
+
   it("fetches and renders the selected period", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
@@ -50,7 +73,7 @@ describe("TrendingBoard", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     render(<TrendingBoard initialItems={[]} />);
-    fireEvent.click(screen.getByRole("button", { name: "本周" }));
+    fireEvent.click(screen.getByRole("tab", { name: "本周" }));
 
     expect(screen.getByText("正在加载趋势榜…")).not.toBeNull();
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/trending?period=weekly"));
@@ -62,7 +85,7 @@ describe("TrendingBoard", () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ items: [] }) }));
     render(<TrendingBoard initialItems={[]} />);
 
-    fireEvent.click(screen.getByRole("button", { name: "本月" }));
+    fireEvent.click(screen.getByRole("tab", { name: "本月" }));
 
     expect(await screen.findByText("暂无本月趋势 Skill。")).not.toBeNull();
   });
@@ -75,7 +98,7 @@ describe("TrendingBoard", () => {
     }));
     render(<TrendingBoard initialItems={[]} />);
 
-    fireEvent.click(screen.getByRole("button", { name: "本周" }));
+    fireEvent.click(screen.getByRole("tab", { name: "本周" }));
 
     expect(await screen.findByText("暂无本周趋势 Skill。")).not.toBeNull();
     expect(screen.queryByText("趋势榜暂时无法加载，请稍后重试。")).toBeNull();
@@ -85,7 +108,7 @@ describe("TrendingBoard", () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
     render(<TrendingBoard initialItems={[]} />);
 
-    fireEvent.click(screen.getByRole("button", { name: "本周" }));
+    fireEvent.click(screen.getByRole("tab", { name: "本周" }));
 
     expect(await screen.findByText("趋势榜暂时无法加载，请稍后重试。")).not.toBeNull();
   });
@@ -100,10 +123,10 @@ describe("TrendingBoard", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(<TrendingBoard initialItems={[]} />);
 
-    fireEvent.click(screen.getByRole("button", { name: "本周" }));
+    fireEvent.click(screen.getByRole("tab", { name: "本周" }));
     expect(await screen.findByText("趋势榜暂时无法加载，请稍后重试。")).not.toBeNull();
 
-    fireEvent.click(screen.getByRole("button", { name: "本周" }));
+    fireEvent.click(screen.getByRole("tab", { name: "本周" }));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
     expect(await screen.findByText("Retry Skill")).not.toBeNull();
@@ -126,7 +149,7 @@ describe("TrendingBoard", () => {
     }));
     render(<TrendingBoard initialItems={[]} />);
 
-    fireEvent.click(screen.getByRole("button", { name: "本周" }));
+    fireEvent.click(screen.getByRole("tab", { name: "本周" }));
 
     const repository = await screen.findByText("acme/skill-finder");
     expect(repository.getAttribute("href")).toBe("https://github.com/acme/skill-finder");
@@ -137,6 +160,25 @@ describe("TrendingBoard", () => {
     expect(screen.getByText("2026-07-21 08:30 UTC")).not.toBeNull();
   });
 
+  it("retains the last successful capture time when a later period is unavailable", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: false,
+      status: 404,
+      json: async () => ({ kind: "not_found", reason: "trending_unavailable", period: "weekly" }),
+    }));
+    render(<TrendingBoard initialItems={[{
+      id: "initial",
+      name: "Initial signal",
+      rank: 1,
+      capturedAt: "2026-07-21T08:30:00.000Z",
+    }]} />);
+
+    fireEvent.click(screen.getByRole("tab", { name: "本周" }));
+
+    expect(await screen.findByText("暂无本周趋势 Skill。")).not.toBeNull();
+    expect(screen.getByText("Last captured 2026-07-21 08:30 UTC")).not.toBeNull();
+  });
+
   it("retries an initially unavailable daily board when today is selected", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
@@ -145,7 +187,7 @@ describe("TrendingBoard", () => {
     vi.stubGlobal("fetch", fetchMock);
     render(<TrendingBoard initialItems={[]} initialUnavailable />);
 
-    fireEvent.click(screen.getByRole("button", { name: "今日" }));
+    fireEvent.click(screen.getByRole("tab", { name: "今日" }));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/trending?period=daily"));
     expect(await screen.findByText("Recovered signal")).not.toBeNull();
