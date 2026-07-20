@@ -67,6 +67,7 @@ describe("hosted production schedules", () => {
 
     expect(yaml).toContain("strategy:\n      fail-fast: false");
     expect(yaml).toMatch(/matrix:\s+period:\s*\[daily, weekly, monthly\]/u);
+    expect(yaml).not.toContain("max-parallel: 1");
     expect(yaml.match(/job collect_github_trending --period/gu)).toHaveLength(1);
     expect(yaml).toContain("job collect_github_trending --period '${{ matrix.period }}'");
     for (const fixedPeriod of ["daily", "weekly", "monthly"]) {
@@ -118,6 +119,10 @@ it("documents direct deployment-managed Trending and potential routes", async ()
   expect(skill).toContain("X");
   expect(skill).toContain("不能解释成零讨论");
   expect(skill).toMatch(/^description: .*GitHub 日榜、周榜、月榜、Trending、潜力项目/mu);
+  expect(skill).toMatch(/^description: .*查看关注.*取消关注/mu);
+  expect(skill).toContain("潜力、1d、3d、规则或新 Repo");
+  expect(skill).toContain("即使同时说“今日值得关注”");
+  expect(skill).toContain("只有不含上述 GitHub signal 限定");
   expect(manifest).toMatch(/^ {2}display_name: "[^"]+"$/mu);
   expect(manifest).toMatch(/^ {2}short_description: "[^"]+"$/mu);
   expect(manifest).toMatch(/^ {2}default_prompt: "[^"]*\$ace-hunter[^"]*"$/mu);
@@ -178,15 +183,28 @@ describe("portable Skill validator", () => {
     await expect(execFileAsync(process.execPath, ["scripts/validate-skill.mjs", missingManifest]))
       .rejects.toThrow();
   });
+
+  it("rejects nonconforming OpenAI interface metadata", async () => {
+    const unquoted = await makeSkill("valid-name", `interface:\n  display_name: Valid Name\n  short_description: "A sufficiently descriptive skill summary"\n  default_prompt: "Use $valid-name for this task."\n`);
+    const shortDescription = await makeSkill("valid-name", `interface:\n  display_name: "Valid Name"\n  short_description: "Too short"\n  default_prompt: "Use $valid-name for this task."\n`);
+    const missingSkillToken = await makeSkill("valid-name", `interface:\n  display_name: "Valid Name"\n  short_description: "A sufficiently descriptive skill summary"\n  default_prompt: "Use this skill for the task."\n`);
+
+    await expect(execFileAsync(process.execPath, ["scripts/validate-skill.mjs", unquoted]))
+      .rejects.toThrow(/must be quoted/u);
+    await expect(execFileAsync(process.execPath, ["scripts/validate-skill.mjs", shortDescription]))
+      .rejects.toThrow(/25-64/u);
+    await expect(execFileAsync(process.execPath, ["scripts/validate-skill.mjs", missingSkillToken]))
+      .rejects.toThrow(/\$valid-name/u);
+  });
 });
 
-async function makeSkill(name: string, withManifest: boolean): Promise<string> {
+async function makeSkill(name: string, manifest: boolean | string): Promise<string> {
   const directory = await mkdtemp(join(tmpdir(), "ace-hunter-skill-"));
   temporaryDirectories.push(directory);
   await writeFile(join(directory, "SKILL.md"), `---\nname: ${name}\ndescription: Test skill\n---\n`);
-  if (withManifest) {
+  if (manifest) {
     await mkdir(join(directory, "agents"));
-    await writeFile(join(directory, "agents/openai.yaml"), "interface: {}\n");
+    await writeFile(join(directory, "agents/openai.yaml"), typeof manifest === "string" ? manifest : "interface: {}\n");
   }
   return directory;
 }

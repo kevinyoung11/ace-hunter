@@ -1,6 +1,6 @@
 ---
 name: ace-hunter
-description: Discover GitHub Trending daily, weekly, monthly, or combined lists; find potential repositories under the 1d/10-Star and 3d/100-Star rules; analyze, observe, or follow products. Use when the user asks GitHub 日榜、周榜、月榜、Trending、潜力项目、今日值得关注、分析项目、观察项目或关注项目。
+description: Discover GitHub Trending daily, weekly, monthly, or combined rankings; find potential repositories under the 1d/10-Star and 3d/100-Star rules; analyze, observe, or follow products. Use when the user asks GitHub 日榜、周榜、月榜、Trending、潜力项目、排名、今日值得关注、分析项目、观察项目、关注项目、查看关注或取消关注。
 ---
 
 # Ace Hunter
@@ -18,6 +18,8 @@ Exact GitHub signal routes:
 - 3 天且至少 100 Star：`"$HOME/Library/Application Support/AceHunter/bin/ace-hunter" potential --rule 3d`
 
 These routes 默认 Top 20. Append `--limit <1-1000>` for a specific count or `--limit all` for every result. Trending and potential requests must use these exact routes and 不得改用 `today`.
+
+Route by the most specific signal intent. If a request includes 潜力、1d、3d、规则或新 Repo, use `potential` 即使同时说“今日值得关注”. 只有不含上述 GitHub signal 限定的泛化“今日值得关注”才使用 `today`.
 
 Other routes:
 
