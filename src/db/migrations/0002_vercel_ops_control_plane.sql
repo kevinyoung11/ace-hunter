@@ -248,7 +248,8 @@ begin
  select * into child from ace_hunter.job_commands where id=p_command_id;
  if child.id is null then return false; end if;
  if child.job_name='collect_x_posts' then return true; end if;
- parent_id := nullif(child.parameters->'lineage'->>'parent_command_id','')::uuid;
+ if coalesce(child.parameters->'lineage'->>'parent_command_id','') !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$' then return false; end if;
+ parent_id := (child.parameters->'lineage'->>'parent_command_id')::uuid;
  if parent_id is null then return false; end if;
  select * into parent from ace_hunter.job_commands where id=parent_id and status='succeeded';
  if parent.id is null then return false; end if;
