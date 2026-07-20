@@ -115,7 +115,7 @@ CODEX_HOME="${CODEX_HOME:-$HOME/.codex}" "$codex_binary" exec --skip-git-repo-ch
   'Use $ace-hunter to run ace-hunter potential --format json. Return only the exact JSON tool result.' \
   >"${smoke_dir}/skill-potential.json"
 chmod 600 "${smoke_dir}/skill-weekly.json" "${smoke_dir}/skill-potential.json"
-"$node_path" "${release}/dist/scripts/validate-signal-release.js" \
+"$node_path" "${release}/dist/scripts/validate-signal-release.js" require-fresh \
   "${smoke_dir}/potential.json" "${smoke_dir}/daily.json" "${smoke_dir}/weekly.json" \
   "${smoke_dir}/monthly.json" "${smoke_dir}/all.json" "${smoke_dir}/skill-weekly.json" \
   "${smoke_dir}/skill-potential.json" >/dev/null

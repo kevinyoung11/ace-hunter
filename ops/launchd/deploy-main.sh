@@ -100,7 +100,7 @@ env -i HOME="$HOME" PATH="/usr/bin:/bin" NODE_PATH="$node_path" \
 env -i HOME="$HOME" PATH="/usr/bin:/bin" NODE_PATH="$node_path" \
   ACE_HUNTER_ENV_FILE="$readonly_env" "$wrapper" trending all --format json >"${smoke_dir}/all.json"
 chmod 600 "${smoke_dir}"/*.json
-"$node_path" "${candidate}/dist/scripts/validate-signal-release.js" \
+"$node_path" "${candidate}/dist/scripts/validate-signal-release.js" allow-empty \
   "${smoke_dir}/potential.json" "${smoke_dir}/daily.json" "${smoke_dir}/weekly.json" \
   "${smoke_dir}/monthly.json" "${smoke_dir}/all.json" >/dev/null
 "$node_path" "${current}/scripts/validate-skill.mjs" "$skill_link" >/dev/null

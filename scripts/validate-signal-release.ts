@@ -16,8 +16,9 @@ const potentialSchema = z.object({
   generatedAt: isoDate, items: z.array(potentialItem),
 }).passthrough();
 const trendingItem = z.object({
-  repositoryId: z.string().min(1), rank: z.number().int().positive(), repositoryUrl: webUrl,
+  repositoryId: z.string().min(1), fullName: z.string().min(1), rank: z.number().int().positive(), repositoryUrl: webUrl,
   homepageUrl: webUrl.nullable(), starsCapturedAt: isoDate.nullable(),
+  stars: z.number().int().nonnegative().nullable(), starsInPeriod: z.number().int().nonnegative().nullable(),
 }).passthrough();
 const availableList = z.object({
   period: z.enum(["daily", "weekly", "monthly"]), status: z.literal("available"),
@@ -34,7 +35,10 @@ const trendingSchema = z.object({
 }).passthrough();
 
 try {
-  const paths = process.argv.slice(2);
+  const [mode, ...paths] = process.argv.slice(2);
+  if (!(["allow-empty", "require-fresh"].includes(mode)) || mode === "require-fresh" && paths.length !== 7) {
+    throw new Error("signal_release_usage_error");
+  }
   if (![5, 7].includes(paths.length) || paths.some((path) => !path.startsWith("/"))) {
     throw new Error("signal_release_usage_error");
   }
@@ -47,11 +51,21 @@ try {
   if (JSON.stringify(all.lists.map(canonicalList)) !== JSON.stringify([
     ...daily.lists, ...weekly.lists, ...monthly.lists,
   ].map(canonicalList))) throw new Error("trending_all_mismatch");
+  if (mode === "require-fresh" && (
+    ![daily, weekly, monthly].every((value) =>
+      value.kind === "trending_lists" && value.lists.length === 1 && value.lists[0]?.status === "available") ||
+    all.kind !== "trending_lists" || all.lists.length !== 3 ||
+    !all.lists.every((list) => list.status === "available")
+  )) throw new Error("fresh_trending_unavailable");
   if (paths.length === 7) {
     const skillWeekly = await parseTrending(skillWeeklyPath, "weekly");
     const skillPotential = await parsePotential(skillPotentialPath);
     if (JSON.stringify(canonicalTrending(skillWeekly)) !== JSON.stringify(canonicalTrending(weekly))) {
       throw new Error("skill_trending_mismatch");
+    }
+    if (mode === "require-fresh" && (skillWeekly.kind !== "trending_lists" ||
+        skillWeekly.lists.length !== 1 || skillWeekly.lists[0]?.status !== "available")) {
+      throw new Error("fresh_skill_trending_unavailable");
     }
     if (JSON.stringify(canonicalPotential(skillPotential)) !== JSON.stringify(canonicalPotential(potential))) {
       throw new Error("skill_potential_mismatch");
@@ -102,7 +116,8 @@ function canonicalList(list: z.infer<typeof availableList> | z.infer<typeof unav
     period: list.period, status: list.status, capturedAt: list.capturedAt, sourceUrl: list.sourceUrl,
     stale: list.stale, items: list.items.map((item) => ({
       repositoryId: item.repositoryId, rank: item.rank, repositoryUrl: item.repositoryUrl,
-      homepageUrl: item.homepageUrl, starsCapturedAt: item.starsCapturedAt,
+      fullName: item.fullName, homepageUrl: item.homepageUrl, stars: item.stars,
+      starsCapturedAt: item.starsCapturedAt, starsInPeriod: item.starsInPeriod,
     })),
   };
 }

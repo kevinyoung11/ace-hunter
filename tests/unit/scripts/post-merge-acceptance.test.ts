@@ -50,6 +50,7 @@ describe("immutable release signal acceptance", () => {
     }
     expect(continuation).toContain('env -i HOME="$HOME" PATH="/usr/bin:/bin"');
     expect(continuation).toContain("validate-signal-release.js");
+    expect(continuation).toContain('validate-signal-release.js" require-fresh');
   });
 
   it("exercises representative Trending and potential Skill routes through Codex", async () => {

@@ -31,6 +31,7 @@ describe("post-switch minimal signal smokes", () => {
     expect(script).toContain('env -i HOME="$HOME" PATH="/usr/bin:/bin" NODE_PATH="$node_path"');
     expect(script).toContain('ACE_HUNTER_RUNTIME_DATABASE_URL');
     expect(script).toContain('validate-signal-release.js');
+    expect(script).toContain('validate-signal-release.js" allow-empty');
     expect(script).not.toContain('ACE_HUNTER_ENV_FILE="$live_env" "$wrapper" potential');
   });
 
