@@ -12,7 +12,9 @@ export async function dispatchGitHubWorkflow(options: GitHubDispatcherOptions, c
     throw Object.assign(new Error("invalid dispatch request"), { code: "validation_error" });
   }
   const request = options.request ?? fetch;
-  const response = await request(`https://api.github.com/repos/${encodeURIComponent(options.owner)}/${encodeURIComponent(options.repo)}/actions/workflows/${encodeURIComponent(command.workflow)}/dispatches`, {
+  // All durable commands enter the single lifecycle workflow; catalog workflow
+  // names remain an allowlisted attribution/validation field.
+  const response = await request(`https://api.github.com/repos/${encodeURIComponent(options.owner)}/${encodeURIComponent(options.repo)}/actions/workflows/ops-command.yml/dispatches`, {
     method: "POST", headers: { accept: "application/vnd.github+json", authorization: `Bearer ${options.token}`, "content-type": "application/json", "user-agent": "ace-hunter-ops" },
     body: JSON.stringify({ ref: options.ref ?? "main", inputs: { job_name: command.jobName, command_id: command.commandId } }),
   });
