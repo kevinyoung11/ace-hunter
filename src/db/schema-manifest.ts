@@ -303,8 +303,8 @@ export async function assertCatalogIsAbsentOrComplete(
   const checks = await client.query<{ entry: string }>(
     `select c.conname||'|'||
             regexp_replace(pg_get_expr(c.conbin,c.conrelid,false),'[[:space:]]+',' ','g') entry
-       from pg_constraint c join pg_namespace n on n.oid=c.connamespace
-      where n.nspname='ace_hunter' and c.contype='c' and c.relname not in ('schema_migrations','job_definitions','job_commands','worker_heartbeats','ops_audit_log')
+       from pg_constraint c join pg_namespace n on n.oid=c.connamespace join pg_class table_object on table_object.oid=c.conrelid
+      where n.nspname='ace_hunter' and c.contype='c' and table_object.relname not in ('schema_migrations','job_definitions','job_commands','worker_heartbeats','ops_audit_log')
       order by c.conname`,
   );
   const foreignKeys = await client.query<{ entry: string }>(
@@ -337,8 +337,8 @@ export async function assertCatalogIsAbsentOrComplete(
     confdeltype: string | null;
   }>(
     `select c.conname,c.contype,case when c.contype='f' then c.confdeltype::text end confdeltype
-       from pg_constraint c join pg_namespace n on n.oid=c.connamespace
-      where n.nspname='ace_hunter' and c.relname not in ('schema_migrations','job_definitions','job_commands','worker_heartbeats','ops_audit_log') order by c.conname`,
+       from pg_constraint c join pg_namespace n on n.oid=c.connamespace join pg_class table_object on table_object.oid=c.conrelid
+      where n.nspname='ace_hunter' and table_object.relname not in ('schema_migrations','job_definitions','job_commands','worker_heartbeats','ops_audit_log') order by c.conname`,
   );
   const constraintManifest = await client.query<{ entry: string }>(
     `select c.conname||'|'||c.contype::text||'|'||
@@ -346,8 +346,8 @@ export async function assertCatalogIsAbsentOrComplete(
             case when c.contype='f' then c.confdeltype::text else '<na>' end||'|'||
             case when c.contype='f' then c.confmatchtype::text else '<na>' end||'|'||
             c.condeferrable||'|'||c.condeferred||'|'||c.convalidated entry
-       from pg_constraint c join pg_namespace n on n.oid=c.connamespace
-      where n.nspname='ace_hunter' and c.relname not in ('schema_migrations','job_definitions','job_commands','worker_heartbeats','ops_audit_log') order by c.conname`,
+       from pg_constraint c join pg_namespace n on n.oid=c.connamespace join pg_class table_object on table_object.oid=c.conrelid
+      where n.nspname='ace_hunter' and table_object.relname not in ('schema_migrations','job_definitions','job_commands','worker_heartbeats','ops_audit_log') order by c.conname`,
   );
   const policies = await client.query<{ entry: string }>(
     `select table_object.relname||'|'||policy.polname||'|'||policy.polpermissive||'|'||
