@@ -33,6 +33,15 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
+      - name: Validate registered GitHub command
+        env:
+          JOB_NAME: ${{ inputs.job_name }}
+        run: >-
+          node --input-type=module -e
+          'import { JOB_CATALOG } from "./dist/src/ops/job-catalog.js";
+          const row=JOB_CATALOG.find(([name,executor])=>name===process.env.JOB_NAME&&executor==="github");
+          if(!row) { console.error("job_name is not a registered GitHub job"); process.exit(1); }
+          if(!row[3]) { console.error("job has no catalog workflow"); process.exit(1); }'
       - run: >-
           node dist/src/cli/index.js job '${{ inputs.job_name }}'
           --command-id '${{ inputs.command_id }}'

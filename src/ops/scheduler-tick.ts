@@ -1,8 +1,8 @@
 import type { JobCommand } from "../db/stores/job-command-store.js";
 import type { JobName, Executor } from "./job-catalog.js";
 export interface SchedulerDefinition { name: JobName; executor: Executor; capability: string; workflow: string; enabled: boolean; pausedAt?: Date|null; schedule: { minute: number|string; hour: number|string }; parameters: Record<string, unknown> }
-export interface SchedulerStore { now(): Promise<Date>; definitions(): Promise<SchedulerDefinition[]>; enqueue(input: { jobName: string; parameters: Record<string, unknown>; scheduledFor: Date; idempotencyKey: string }): Promise<JobCommand> }
-export interface ScheduledDispatch { id: string; workflow: string; commandId: string }
+export interface SchedulerStore { now(): Promise<Date>; definitions(): Promise<SchedulerDefinition[]>; enqueue(input: { jobName: string; parameters: Record<string, unknown>; scheduledFor: Date; idempotencyKey: string }): Promise<JobCommand>; markDispatchFailed?(commandId: string, code: string): Promise<void> }
+export interface ScheduledDispatch { id: string; workflow: string; jobName: JobName; commandId: string }
 export interface SchedulerTickResult { created: number; dispatched: number; observed: boolean; errors: Array<{ jobName: string; code: string }> }
 export async function runSchedulerTick(options: { store: SchedulerStore; dispatch: (command: ScheduledDispatch) => Promise<void>; observe?: boolean }): Promise<SchedulerTickResult> {
   const now = await options.store.now(); const definitions = await options.store.definitions();
@@ -15,8 +15,8 @@ export async function runSchedulerTick(options: { store: SchedulerStore; dispatc
     let command: JobCommand;
     try { command = await options.store.enqueue({ jobName: definition.name, parameters: definition.parameters, scheduledFor: slice, idempotencyKey }); result.created += 1; }
     catch (error) { result.errors.push({ jobName: definition.name, code: stableCode(error) }); continue; }
-    try { await options.dispatch({ id: command.id, commandId: command.id, workflow: definition.workflow }); result.dispatched += 1; }
-    catch (error) { result.errors.push({ jobName: definition.name, code: stableCode(error) }); }
+    try { await options.dispatch({ id: command.id, commandId: command.id, jobName: definition.name, workflow: definition.workflow }); result.dispatched += 1; }
+    catch (error) { const code = stableCode(error); result.errors.push({ jobName: definition.name, code }); await options.store.markDispatchFailed?.(command.id, code); }
   }
   return result;
 }
