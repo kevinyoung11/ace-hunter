@@ -10,22 +10,16 @@ afterEach(() => {
   for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true });
 });
 
-describe("run-user-command read-only credential boundary", () => {
-  it.each(["potential", "trending"])("retrieves only the runtime database for %s", (command) => {
+describe("run-user-command runtime environment boundary", () => {
+  it.each(["potential", "trending"])("uses the persisted runtime environment for %s", (command) => {
     const result = invoke(command, command === "trending" ? ["daily"] : []);
-    expect(result.accounts).toEqual(["runtime-database-url"]);
     expect(result.argv).toEqual([command, ...(command === "trending" ? ["daily"] : [])]);
   });
 
   it.each(["today", "trending-extra", "potentially", "--"])(
     "keeps the full credential path when the first token is %s",
     (command) => {
-      expect(invoke(command).accounts).toEqual([
-        "runtime-database-url",
-        "github-token",
-        "user-id",
-        "deepseek-api-key",
-      ]);
+      expect(invoke(command).argv).toEqual([command]);
     },
   );
 
@@ -36,13 +30,12 @@ describe("run-user-command read-only credential boundary", () => {
   });
 });
 
-function invoke(command: string, args: string[] = [], stalePersistedNode = false): { accounts: string[]; argv: string[]; nodeInvocations: number } {
+function invoke(command: string, args: string[] = [], stalePersistedNode = false): { argv: string[]; nodeInvocations: number } {
   const root = mkdtempSync(join(tmpdir(), "ace-hunter-user-wrapper-"));
   directories.push(root);
   const release = join(root, "release");
   const home = join(root, "home");
   const appDirectory = join(home, "Library", "Application Support", "AceHunter");
-  const log = join(root, "keychain.log");
   const output = join(root, "cli.json");
   const nodeLog = join(root, "node.log");
   mkdirSync(join(release, "scripts"), { recursive: true });
@@ -62,7 +55,6 @@ function invoke(command: string, args: string[] = [], stalePersistedNode = false
     "import { writeFileSync } from 'node:fs';",
     "writeFileSync(process.env.ACE_TEST_OUTPUT, JSON.stringify(process.argv.slice(2)));",
   ].join("\n"));
-  const helper = join(root, "keychain-helper.sh");
   const node22 = join(root, "node");
   writeFileSync(node22, [
     "#!/bin/bash",
@@ -70,14 +62,14 @@ function invoke(command: string, args: string[] = [], stalePersistedNode = false
     'printf "invoke\\n" >>"$ACE_TEST_NODE_LOG"',
     `exec ${JSON.stringify(process.execPath)} "$@"`,
   ].join("\n"), { mode: 0o700 });
-  writeFileSync(helper, [
-    "#!/bin/bash",
-    "set -euo pipefail",
-    'printf "%s\\n" "$2" >>"$ACE_TEST_KEYCHAIN_LOG"',
-    'printf "value-for-%s\\n" "$2"',
-  ].join("\n"), { mode: 0o700 });
+  const runtimeEnv = join(appDirectory, "runtime.env");
+  writeFileSync(runtimeEnv, [
+    'ACE_HUNTER_RUNTIME_DATABASE_URL="postgres://runtime:secret@example.test/db"',
+    'ACE_HUNTER_GITHUB_TOKEN="token"',
+    'ACE_HUNTER_USER_ID="00000000-0000-4000-8000-000000000001"',
+  ].join("\n"), { mode: 0o600 });
   writeFileSync(join(appDirectory, "scheduler.conf"), [
-    `KEYCHAIN_HELPER='${helper}'`,
+    `RUNTIME_ENV_FILE='${runtimeEnv}'`,
     `NODE_PATH='${stalePersistedNode ? join(root, "removed", "node") : node22}'`,
     "TWITTER_CLI_PATH='twitter'",
   ].join("\n"));
@@ -87,13 +79,11 @@ function invoke(command: string, args: string[] = [], stalePersistedNode = false
       PATH: `${root}:${process.env.PATH}`,
       HOME: home,
       TMPDIR: join(root, "tmp"),
-      ACE_TEST_KEYCHAIN_LOG: log,
       ACE_TEST_OUTPUT: output,
       ACE_TEST_NODE_LOG: nodeLog,
     },
   });
   return {
-    accounts: readFileSync(log, "utf8").trim().split("\n"),
     argv: JSON.parse(readFileSync(output, "utf8")) as string[],
     nodeInvocations: readFileSync(nodeLog, "utf8").trim().split("\n").filter(Boolean).length,
   };

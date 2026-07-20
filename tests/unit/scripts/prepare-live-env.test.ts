@@ -1,11 +1,18 @@
-import { describe, expect, it, vi } from "vitest";
+import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   buildRoleUrl,
+  createFileCredentialStore,
   fixedRoleCredentials,
   parseSourceDotenv,
   serializeDotenv,
   setFixedRolePassword,
 } from "../../../scripts/prepare-live-env.js";
+
+const temporaryDirectories: string[] = [];
+afterEach(async () => { await Promise.all(temporaryDirectories.splice(0).map((path) => rm(path, { recursive: true, force: true }))); });
 
 describe("prepare-live-env safety helpers", () => {
   it("parses dotenv assignments but rejects shell syntax", () => {
@@ -21,6 +28,23 @@ describe("prepare-live-env safety helpers", () => {
     expect(serializeDotenv({ TOKEN: "a b#c\nnext", URL: "postgres://u:p@h/db" })).toBe(
       'TOKEN="a b#c\\nnext"\nURL="postgres://u:p@h/db"\n',
     );
+  });
+
+  it("persists fixed database credentials in an owner-only, atomic local store", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "ace-hunter-credential-store-"));
+    temporaryDirectories.push(directory);
+    const path = join(directory, "credentials.env");
+    const store = createFileCredentialStore(path);
+
+    expect(await store.get("runtime-database-url")).toBeNull();
+    await store.set("runtime-database-url", "postgres://runtime:secret@example.test/db");
+    await store.set("migration-database-url", "postgres://migration:secret@example.test/db");
+
+    expect(await store.get("runtime-database-url")).toBe("postgres://runtime:secret@example.test/db");
+    expect((await stat(path)).mode & 0o777).toBe(0o600);
+    expect(await readFile(path, "utf8")).not.toContain("runtime-database-url");
+    await store.delete("runtime-database-url");
+    expect(await store.get("runtime-database-url")).toBeNull();
   });
 
   it("uses URL credential fields instead of interpolating credentials", () => {

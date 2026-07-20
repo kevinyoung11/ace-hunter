@@ -89,17 +89,21 @@ async function makeFixture(slowPreflight: boolean, proxy?: string, stalePersiste
   await mkdir(join(release, "scripts"), { recursive: true });
   await writeFile(join(release, "scripts", "resolve-node22.sh"), await readFile("scripts/resolve-node22.sh", "utf8"), { mode: 0o755 });
   const node = join(bin, "node");
-  const keychain = join(bin, "keychain");
   const twitter = join(bin, "twitter");
   const nodeLog = join(home, "node.log");
   await writeFile(node, `#!/bin/bash\nif [[ "\${1:-}" = --version ]]; then printf 'v22.17.0\\n'; exit 0; fi\nprintf 'invoke\\n' >>"$HOME/node.log"\ncase "$1" in *assert-twitter-preflight.js) printf '%s' "\${HTTPS_PROXY:-missing}" >"$HOME/proxy-seen"; ${slowPreflight ? "sleep 30" : ":"};; esac\nexit 0\n`);
-  await writeFile(keychain, "#!/bin/bash\nprintf value\n");
   await writeFile(twitter, "#!/bin/bash\nexit 0\n");
-  await Promise.all([node, keychain, twitter].map((path) => chmod(path, 0o700)));
+  await Promise.all([node, twitter].map((path) => chmod(path, 0o700)));
+  const runtimeEnv = join(app, "runtime.env");
+  await writeFile(runtimeEnv, [
+    'ACE_HUNTER_RUNTIME_DATABASE_URL="postgres://runtime:secret@example.test/db"',
+    'ACE_HUNTER_GITHUB_TOKEN="token"',
+    'ACE_HUNTER_USER_ID="00000000-0000-4000-8000-000000000001"',
+  ].join("\n"), { mode: 0o600 });
   await writeFile(join(app, "scheduler.conf"), [
     `NODE_PATH=${quote(stalePersistedNode ? join(bin, "removed-node") : node)}`,
     `TWITTER_CLI_PATH=${quote(twitter)}`,
-    `KEYCHAIN_HELPER=${quote(keychain)}`,
+    `RUNTIME_ENV_FILE=${quote(runtimeEnv)}`,
     `RELEASE_ROOT=${quote(release)}`,
     ...(proxy === undefined ? [] : [`HTTPS_PROXY=${quote(proxy)}`]),
     "",

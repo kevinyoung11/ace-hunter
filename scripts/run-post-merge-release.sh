@@ -20,24 +20,22 @@ main_sha="$(git rev-parse origin/main)"
 git merge-base --is-ancestor "$pr_head" "$main_sha"
 
 app_dir="${HOME}/Library/Application Support/AceHunter"
-helper="${app_dir}/bin/keychain-secret"
-[[ -x "$helper" ]] || { printf 'keychain_helper_missing\n' >&2; exit 1; }
-live_env="$("$node_path" --import tsx scripts/prepare-live-env.ts --mode release --source "$SOURCE_ENV" --keychain-helper "$helper")"
+credential_store="${app_dir}/runtime-credentials.env"
+credential_mode=release
+[[ -f "$credential_store" ]] || credential_mode=bootstrap
+live_env="$("$node_path" --import tsx scripts/prepare-live-env.ts --mode "$credential_mode" --source "$SOURCE_ENV" --credential-store "$credential_store")"
 live_env="$(realpath "$live_env")"
 live_dir="$(dirname "$live_env")"
 temp_base="${TMPDIR:-/tmp}"; temp_base="$(realpath "${temp_base%/}")"
 case "$live_env" in "${temp_base}"/ace-hunter-live-*/runtime.env) ;; *) exit 1;; esac
 [[ "$(stat -f '%u' "$live_env")" = "$(id -u)" && "$(stat -f '%Lp' "$live_dir")" = 700 && "$(stat -f '%Lp' "$live_env")" = 600 ]] || exit 1
 
-rollback_dir="${live_dir}/keychain-rollback"
-mkdir "$rollback_dir" && chmod 700 "$rollback_dir"
 transaction_helper="${live_dir}/release-transaction.mjs"
 cp scripts/release-transaction.mjs "$transaction_helper"
 chmod 600 "$transaction_helper"
 release_transaction="${live_dir}/release-rollback"
 transaction_started=0
 transaction_committed=0
-snapshot_complete=0
 cleanup() {
   trap - EXIT
   local restore_failed=0
@@ -52,12 +50,6 @@ cleanup() {
       "$node_path" "$transaction_helper" rollback "$release_transaction" >/dev/null || restore_failed=1
     fi
   fi
-  if [[ "$transaction_committed" -eq 0 && "$snapshot_complete" -eq 1 ]]; then
-    for account in runtime-database-url github-token user-id deepseek-api-key; do
-      if [[ -f "${rollback_dir}/${account}" ]]; then "$helper" set "$account" <"${rollback_dir}/${account}" || restore_failed=1
-      elif [[ -f "${rollback_dir}/${account}.absent" ]]; then "$helper" delete "$account" >/dev/null 2>&1 || restore_failed=1; fi
-    done
-  fi
   if [[ "$restore_failed" -ne 0 ]]; then
     printf 'release_rollback_failed artifact=%s\n' "$live_dir" >&2
     return 1
@@ -69,26 +61,11 @@ trap on_exit EXIT
 trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
-for account in runtime-database-url github-token user-id deepseek-api-key; do
-  error_file="${rollback_dir}/${account}.error"
-  if "$helper" get "$account" >"${rollback_dir}/${account}" 2>"$error_file"; then
-    chmod 600 "${rollback_dir}/${account}"
-  elif [[ "$(cat "$error_file")" = secret_unavailable ]]; then
-    rm -f "${rollback_dir}/${account}" "$error_file"
-    : >"${rollback_dir}/${account}.absent"
-  else
-    printf 'keychain_snapshot_failed\n' >&2
-    exit 1
-  fi
-done
-snapshot_complete=1
 "$node_path" "$transaction_helper" begin "$release_transaction" "$app_dir" "${CODEX_HOME:-$HOME/.codex}" >/dev/null
 transaction_started=1
-
-"$node_path" --import tsx scripts/pipe-env-value.ts "$live_env" ACE_HUNTER_RUNTIME_DATABASE_URL | "$helper" set runtime-database-url
-"$node_path" --import tsx scripts/pipe-env-value.ts "$live_env" ACE_HUNTER_GITHUB_TOKEN | "$helper" set github-token
-"$node_path" --import tsx scripts/pipe-env-value.ts "$live_env" ACE_HUNTER_USER_ID | "$helper" set user-id
-"$node_path" --import tsx scripts/pipe-env-value.ts "$live_env" ACE_HUNTER_DEEPSEEK_API_KEY | "$helper" set deepseek-api-key
+runtime_env_tmp="${app_dir}/.runtime.env.$$"
+"$node_path" --import tsx scripts/write-runtime-env.ts "$live_env" "$runtime_env_tmp"
+mv -f "$runtime_env_tmp" "${app_dir}/runtime.env"
 
 gh api --method PUT "repos/${GH_REPO}/environments/ace-hunter-production" \
   --input - <<'JSON' >/dev/null
