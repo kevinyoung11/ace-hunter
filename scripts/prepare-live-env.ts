@@ -154,8 +154,11 @@ export async function recoverFixedRoleCredentials(options: {
   runtimeUrl: string;
   verify?: (url: string) => Promise<void>;
 }): Promise<{ migrationUrl: string; runtimeUrl: string }> {
+  const oldMigration = await options.keychain.get(KEYCHAIN_ACCOUNTS.migration);
+  const oldRuntime = await options.keychain.get(KEYCHAIN_ACCOUNTS.runtime);
   try {
     if (!options.keychain.setPair) throw new Error("atomic_credential_store_required");
+    if (!oldMigration || !oldRuntime) throw new Error("fixed_credentials_required");
     validateRoleDsn(options.migrationUrl, "ace_hunter_migrator", options.adminUrl);
     validateRoleDsn(options.runtimeUrl, "ace_hunter_runtime", options.adminUrl);
     const verify = options.verify ?? verifyRuntimeCredential;
@@ -164,6 +167,17 @@ export async function recoverFixedRoleCredentials(options: {
     await options.keychain.setPair(options.migrationUrl, options.runtimeUrl);
     return { migrationUrl: options.migrationUrl, runtimeUrl: options.runtimeUrl };
   } catch (error) {
+    try {
+      if (oldMigration && oldRuntime) {
+        await setFixedRolePassword(options.admin, "ace_hunter_migrator", new URL(oldMigration).password);
+        await setFixedRolePassword(options.admin, "ace_hunter_runtime", new URL(oldRuntime).password);
+        await (options.verify ?? verifyRuntimeCredential)(oldMigration);
+        await (options.verify ?? verifyRuntimeCredential)(oldRuntime);
+        if (options.keychain.setPair) await options.keychain.setPair(oldMigration, oldRuntime);
+      }
+    } catch {
+      throw new Error("modified_requires_manual_recovery");
+    }
     if (error instanceof Error && error.message === "database_credential_recovery_required") throw error;
     throw new Error("database_credential_recovery_required");
   }
@@ -313,7 +327,7 @@ async function main(): Promise<void> {
     await recordAdminCatalog(admin, fingerprintPath);
     if (args.mode === "bootstrap") await bootstrapFixedRolesAndSchema(admin);
     const selectedCredentials = credentials ?? (args.mode === "recover"
-      ? await recoverFromAdmin({ admin, adminUrl: source.adminUrl, store })
+      ? await recoverFromAdmin({ admin, adminUrl: source.adminUrl, store, source, fingerprintPath, runtimeEnvPath: join(dirname(args.credentialStore), "runtime.env") })
       : await fixedRoleCredentials({ mode: "bootstrap", keychain: store, admin, adminUrl: source.adminUrl }));
     const selected = source.userId
       ? await admin.query("select id from auth.users where id=$1", [source.userId])
@@ -321,7 +335,7 @@ async function main(): Promise<void> {
     if (selected.rows.length !== 1 || typeof selected.rows[0]?.id !== "string") throw new Error("existing_auth_user_required");
     const migration = await readFile("src/db/migrations/0001_ace_hunter_initial.sql");
     const checksum = createHash("sha256").update(migration).digest("hex");
-    await writeFile(envPath, serializeDotenv({
+    if (args.mode !== "recover") await writeFile(envPath, serializeDotenv({
       ACE_HUNTER_ADMIN_DATABASE_URL: source.adminUrl,
       ACE_HUNTER_MIGRATION_DATABASE_URL: selectedCredentials.migrationUrl,
       ACE_HUNTER_RUNTIME_DATABASE_URL: selectedCredentials.runtimeUrl,
@@ -335,7 +349,7 @@ async function main(): Promise<void> {
       ACE_HUNTER_ADMIN_FINGERPRINT_FILE: fingerprintPath,
     }), { mode: 0o600, flag: "wx" });
     completed = true;
-    process.stdout.write(`${envPath}\n`);
+    process.stdout.write(`${args.mode === "recover" ? join(dirname(args.credentialStore), "runtime.env") : envPath}\n`);
   } finally {
     await admin.end();
     if (!completed) await rm(directory, { recursive: true, force: true });
@@ -344,15 +358,45 @@ async function main(): Promise<void> {
   }
 }
 
-async function recoverFromAdmin(options: { admin: Queryable; adminUrl: string; store: CredentialStore }): Promise<{ migrationUrl: string; runtimeUrl: string }> {
+async function recoverFromAdmin(options: { admin: Queryable; adminUrl: string; store: CredentialStore; source: ReturnType<typeof requiredSource>; fingerprintPath: string; runtimeEnvPath: string }): Promise<{ migrationUrl: string; runtimeUrl: string }> {
+  const oldMigration = await options.store.get(KEYCHAIN_ACCOUNTS.migration);
+  const oldRuntime = await options.store.get(KEYCHAIN_ACCOUNTS.runtime);
+  let changedMigration = false;
+  let changedRuntime = false;
+  let temporary: string | undefined;
   try {
+    if (!options.store.setPair || !oldMigration || !oldRuntime) throw new Error("atomic_credential_store_required");
     const generate = () => randomBytes(32).toString("base64url");
     const migrationUrl = buildRoleUrl(options.adminUrl, "ace_hunter_migrator", generate());
     const runtimeUrl = buildRoleUrl(options.adminUrl, "ace_hunter_runtime", generate());
     await setFixedRolePassword(options.admin, "ace_hunter_migrator", new URL(migrationUrl).password);
+    changedMigration = true;
     await setFixedRolePassword(options.admin, "ace_hunter_runtime", new URL(runtimeUrl).password);
-    return await recoverFixedRoleCredentials({ keychain: options.store, admin: options.admin, adminUrl: options.adminUrl, migrationUrl, runtimeUrl });
+    changedRuntime = true;
+    await verifyRuntimeCredential(migrationUrl);
+    await verifyRuntimeCredential(runtimeUrl);
+    const selected = options.source.userId
+      ? await options.admin.query("select id from auth.users where id=$1", [options.source.userId])
+      : await options.admin.query("select id from auth.users order by created_at,id limit 1");
+    if (selected.rows.length !== 1 || typeof selected.rows[0]?.id !== "string") throw new Error("existing_auth_user_required");
+    const migration = await readFile("src/db/migrations/0001_ace_hunter_initial.sql");
+    const checksum = createHash("sha256").update(migration).digest("hex");
+    const content = serializeDotenv({ ACE_HUNTER_ADMIN_DATABASE_URL: options.source.adminUrl, ACE_HUNTER_MIGRATION_DATABASE_URL: migrationUrl, ACE_HUNTER_RUNTIME_DATABASE_URL: runtimeUrl, ACE_HUNTER_MIGRATION_SHA256: checksum, ACE_HUNTER_USER_ID: String(selected.rows[0].id), ACE_HUNTER_GITHUB_TOKEN: options.source.githubToken, ACE_HUNTER_DEEPSEEK_API_KEY: options.source.deepseekKey, DEEPSEEK_BASE_URL: "https://api.deepseek.com", DEEPSEEK_MODEL: "deepseek-chat", TWITTER_CLI_PATH: "twitter", ACE_HUNTER_ADMIN_FINGERPRINT_FILE: options.fingerprintPath });
+    temporary = `${options.runtimeEnvPath}.recover.${process.pid}`;
+    await writeFile(temporary, content, { mode: 0o600, flag: "wx" });
+    await options.store.setPair(migrationUrl, runtimeUrl);
+    await rename(temporary, options.runtimeEnvPath);
+    return { migrationUrl, runtimeUrl };
   } catch {
+    if (temporary) await rm(temporary, { force: true });
+    const restore = async () => {
+      if (changedMigration && oldMigration) await setFixedRolePassword(options.admin, "ace_hunter_migrator", new URL(oldMigration).password);
+      if (changedRuntime && oldRuntime) await setFixedRolePassword(options.admin, "ace_hunter_runtime", new URL(oldRuntime).password);
+      if (oldMigration && oldRuntime && options.store.setPair) await options.store.setPair(oldMigration, oldRuntime);
+      if (oldMigration) await verifyRuntimeCredential(oldMigration);
+      if (oldRuntime) await verifyRuntimeCredential(oldRuntime);
+    };
+    try { await restore(); } catch { throw new Error("modified_requires_manual_recovery"); }
     throw new Error("database_credential_recovery_required");
   }
 }

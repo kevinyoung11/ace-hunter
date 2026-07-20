@@ -154,8 +154,16 @@ describe("prepare-live-env safety helpers", () => {
 
   it("fails recovery when the store cannot atomically replace both DSNs", async () => {
     const store = { get: vi.fn(async () => "old"), set: vi.fn(), delete: vi.fn() };
-    await expect(recoverFixedRoleCredentials({ keychain: store, admin: { query: vi.fn() }, adminUrl: "postgres://admin:x@db.example.test:5432/postgres", migrationUrl: "postgres://ace_hunter_migrator:new@db.example.test:5432/postgres", runtimeUrl: "postgres://ace_hunter_runtime:new@db.example.test:5432/postgres", verify: vi.fn(async () => undefined) })).rejects.toThrow("database_credential_recovery_required");
+    await expect(recoverFixedRoleCredentials({ keychain: store, admin: { query: vi.fn() }, adminUrl: "postgres://admin:x@db.example.test:5432/postgres", migrationUrl: "postgres://ace_hunter_migrator:new@db.example.test:5432/postgres", runtimeUrl: "postgres://ace_hunter_runtime:new@db.example.test:5432/postgres", verify: vi.fn(async () => undefined) })).rejects.toThrow("modified_requires_manual_recovery");
     expect(store.set).not.toHaveBeenCalled();
+  });
+
+  it("restores both old role passwords when candidate store replacement fails", async () => {
+    const oldMigration = "postgres://ace_hunter_migrator:old-m@db.example.test:5432/postgres";
+    const oldRuntime = "postgres://ace_hunter_runtime:old-r@db.example.test:5432/postgres";
+    const query = vi.fn(async () => { throw new Error("set_pair_failed"); });
+    const store = { get: vi.fn(async (account: string) => account.startsWith("migration") ? oldMigration : oldRuntime), setPair: vi.fn(async () => { throw new Error("set_pair_failed"); }), set: vi.fn(), delete: vi.fn() };
+    await expect(recoverFixedRoleCredentials({ keychain: store, admin: { query }, adminUrl: "postgres://admin:x@db.example.test:5432/postgres", migrationUrl: "postgres://ace_hunter_migrator:new-m@db.example.test:5432/postgres", runtimeUrl: "postgres://ace_hunter_runtime:new-r@db.example.test:5432/postgres", verify: vi.fn(async () => undefined) })).rejects.toThrow("modified_requires_manual_recovery");
   });
 
   it("requires recovery mode to provide candidate role passwords", async () => {
