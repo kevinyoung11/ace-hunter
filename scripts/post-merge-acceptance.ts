@@ -52,6 +52,53 @@ try {
   if (JSON.stringify(periods) !== JSON.stringify(["daily", "monthly", "weekly"])) {
     throw new Error("missing_trending_period");
   }
+  const candidateSnapshots = await pool.query<{ n: number; valid: number }>(`with latest_candidate as (
+      select distinct on (repository_id)
+        repository_id,candidate_rule_version,candidate_buckets
+      from ace_hunter.repository_snapshots
+      where collected_fields->>'core'='true'
+        and coalesce(nullif(collected_fields->>'observed_at','')::timestamptz,created_at) >= $1
+      order by repository_id,
+        coalesce(nullif(collected_fields->>'observed_at','')::timestamptz,created_at) desc,
+        captured_at desc,created_at desc,id desc
+    )
+    select count(*)::int n,count(*) filter (where candidate_rule_version='v2'
+      and candidate_buckets <@ array['age_1d_stars_10','age_3d_stars_100']::text[])::int valid
+    from latest_candidate`, [startedAt]);
+  if ((candidateSnapshots.rows[0]?.n ?? 0) < 1) throw new Error("missing_candidate_v2_snapshot");
+  if (candidateSnapshots.rows[0].valid !== candidateSnapshots.rows[0].n) {
+    throw new Error("invalid_candidate_v2_snapshot");
+  }
+  const trendingRun = expectedRuns.find((item) => item.workflow === "trending.yml");
+  if (trendingRun === undefined) throw new Error("missing_complete_trending_batch");
+  const completeTrending = await pool.query<{ period: string }>(`with candidate_batches as (
+      select trending.period,trending.captured_at,
+        min(trending.job_run_id::text)::uuid job_run_id,count(*)::int row_count
+      from ace_hunter.github_trending_snapshots trending
+      where trending.language='all' and trending.captured_at >= $1
+        and trending.period=any(array['daily','weekly','monthly']::text[])
+      group by trending.period,trending.captured_at
+      having count(trending.job_run_id)=count(*)
+        and count(distinct trending.job_run_id)=1
+        and bool_and(trending.collection_status='success')
+    )
+    select distinct candidate.period
+    from candidate_batches candidate
+    join ace_hunter.job_runs run on run.id=candidate.job_run_id
+    where run.job_name='collect_github_trending'
+      and run.status='success' and run.completed_at is not null
+      and run.completed_at >= $1
+      and run.items_failed=0 and run.items_succeeded=candidate.row_count
+      and run.parameters->>'orchestrator_workflow'='trending.yml'
+      and run.parameters->>'orchestrator_run_id'=$2
+      and run.parameters->>'orchestrator_run_attempt'=$3
+    order by candidate.period`, [
+    startedAt, String(trendingRun.databaseId), String(trendingRun.runAttempt),
+  ]);
+  if (JSON.stringify(completeTrending.rows.map((row) => row.period)) !==
+      JSON.stringify(["daily", "monthly", "weekly"])) {
+    throw new Error("missing_complete_trending_batch");
+  }
   const outputs = await pool.query<{ output_type: string }>(`select output_type from ace_hunter.analysis_outputs
     where (output_type='daily_report' and completed_at >= $1)
        or (output_type='realtime_observation' and created_at >= $1)`, [startedAt]);

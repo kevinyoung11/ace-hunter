@@ -83,6 +83,11 @@ atomic_replace "$wrapper_tmp" "$wrapper"
 ln -s "${current}/skills/ace-hunter" "${skill_link}.new.$$"
 atomic_replace "${skill_link}.new.$$" "$skill_link"
 ACE_HUNTER_ENV_FILE="$live_env" "$wrapper" list >/dev/null
+ACE_HUNTER_ENV_FILE="$live_env" "$wrapper" potential --format json >/dev/null
+ACE_HUNTER_ENV_FILE="$live_env" "$wrapper" trending daily --format json >/dev/null
+ACE_HUNTER_ENV_FILE="$live_env" "$wrapper" trending weekly --format json >/dev/null
+ACE_HUNTER_ENV_FILE="$live_env" "$wrapper" trending monthly --format json >/dev/null
+ACE_HUNTER_ENV_FILE="$live_env" "$wrapper" trending all --format json >/dev/null
 "$node_path" "${current}/scripts/validate-skill.mjs" "$skill_link" >/dev/null
 trap - ERR HUP INT TERM
 trap cleanup_transaction EXIT

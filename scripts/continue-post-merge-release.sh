@@ -12,6 +12,8 @@ case "$live_env" in "${temp_base}"/ace-hunter-live-*/runtime.env) ;; *) exit 1;;
 live_dir="$(dirname "$live_env")"
 [[ "$(stat -f '%u' "$live_env")" = "$(id -u)" && "$(stat -f '%Lp' "$live_dir")" = 700 && "$(stat -f '%Lp' "$live_env")" = 600 ]] || exit 1
 release="${HOME}/Library/Application Support/AceHunter/releases/${main_sha}"
+node_path="$(command -v node)"
+node_path="$(realpath "$node_path")"
 [[ "$(pwd -P)" != "$old_worktree" ]] || cd "$release"
 cd "$release"
 cleanup() { case "$live_dir" in "${temp_base}"/ace-hunter-live-*) rm -rf "$live_dir";; esac; }
@@ -77,11 +79,18 @@ for poll in $(seq 1 120); do
 done
 [[ "$durable_ready" -eq 1 ]] || { printf 'durable_x_timeout\n' >&2; exit 1; }
 
+ACE_HUNTER_ENV_FILE="$live_env" "$node_path" "${release}/dist/src/cli/index.js" potential --format json >/dev/null
+ACE_HUNTER_ENV_FILE="$live_env" "$node_path" "${release}/dist/src/cli/index.js" trending daily --format json >/dev/null
+ACE_HUNTER_ENV_FILE="$live_env" "$node_path" "${release}/dist/src/cli/index.js" trending weekly --format json >/dev/null
+ACE_HUNTER_ENV_FILE="$live_env" "$node_path" "${release}/dist/src/cli/index.js" trending monthly --format json >/dev/null
+ACE_HUNTER_ENV_FILE="$live_env" "$node_path" "${release}/dist/src/cli/index.js" trending all --format json >/dev/null
 wrapper="${HOME}/Library/Application Support/AceHunter/bin/ace-hunter"
 "$wrapper" observe "$ACE_E2E_REPOSITORY" --format json >/dev/null
 codex_binary="$(command -v codex)"
 CODEX_HOME="${CODEX_HOME:-$HOME/.codex}" "$codex_binary" exec --skip-git-repo-check 'Use $ace-hunter to list monitored products. Return only the tool result.' >/dev/null
 CODEX_HOME="${CODEX_HOME:-$HOME/.codex}" "$codex_binary" exec --skip-git-repo-check "Use \$ace-hunter to observe ${ACE_E2E_REPOSITORY}. Return only the tool result." >/dev/null
+CODEX_HOME="${CODEX_HOME:-$HOME/.codex}" "$codex_binary" exec --skip-git-repo-check 'Use $ace-hunter to show the weekly GitHub Trending list. Return only the tool result.' >/dev/null
+CODEX_HOME="${CODEX_HOME:-$HOME/.codex}" "$codex_binary" exec --skip-git-repo-check 'Use $ace-hunter to show potential GitHub repositories. Return only the tool result.' >/dev/null
 
 : "${ACCEPTANCE_STARTED_AT:?ACCEPTANCE_STARTED_AT is required}"
 export KICKSTART_BOUNDARY="$kickstart_boundary" ACCEPTANCE_RUN_IDS_FILE="$acceptance_json" MAIN_SHA="$main_sha"
