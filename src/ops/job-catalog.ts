@@ -29,6 +29,7 @@ const schemas: Record<JobName, z.ZodTypeAny> = {
 };
 
 const params = z.record(z.string(), z.unknown()).default({});
+const trusted = z.object({ command_id:z.string().uuid().optional(), orchestrator_run_id:z.string().regex(/^\d{1,20}$/).optional(), orchestrator_run_attempt:z.string().regex(/^(?:[1-9]|[1-9]\d|100)$/).optional(), orchestrator_workflow:z.string().max(128).optional(), scheduler:z.literal("launchd").optional(), scheduler_run_id:z.string().uuid().optional() }).partial();
 export function jobDefinition(name: string): JobDefinition {
   const row = JOB_CATALOG.find((x) => x[0] === name);
   if (!row) throw new Error("unknown_job");
@@ -39,5 +40,5 @@ export function validateJobRequest(input: { name: string; executor?: Executor; c
   if (input.executor && input.executor !== definition.executor) throw new Error("executor_mismatch");
   if (input.capability && input.capability !== definition.capability) throw new Error("capability_mismatch");
   const parameters = params.parse(input.parameters ?? {}) as Record<string, unknown>;
-  return { definition, parameters: schemas[definition.name].parse(parameters) as Record<string, unknown> };
+  return { definition, parameters: z.intersection(schemas[definition.name], trusted).parse(parameters) as Record<string, unknown> };
 }
