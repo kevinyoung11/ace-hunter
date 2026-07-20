@@ -92,7 +92,9 @@ for poll in $(seq 1 120); do
   sleep 5
   if ACE_HUNTER_ENV_FILE="$live_env" KICKSTART_BOUNDARY="$kickstart_boundary" "$node_path" --import tsx -e 'import{Pool}from"pg";import{loadRuntimeConfig}from"./src/config/load-config.ts";const p=new Pool({connectionString:loadRuntimeConfig(process.env).runtimeDatabaseUrl});const r=await p.query("select count(distinct job_name)::int n from ace_hunter.job_runs where created_at>$1 and parent_run_id is null and parameters->>$2=$3 and status in ($4,$5) and job_name=any($6::text[])",[process.env.KICKSTART_BOUNDARY,"scheduler","launchd","success","partial",["collect_x_posts","analyze_x_posts","collect_x_comments"]]);await p.end();process.exit(r.rows[0].n===3?0:1)' 2>/dev/null; then durable_ready=1; break; fi
 done
-[[ "$durable_ready" -eq 1 ]] || { printf 'durable_x_timeout\n' >&2; exit 1; }
+# X is supplementary evidence. GitHub Trending and potential-project delivery
+# must remain available when the external X source is temporarily unavailable.
+[[ "$durable_ready" -eq 1 ]] || printf 'durable_x_unavailable_nonblocking\n' >&2
 
 smoke_dir="${release_transaction}/continuation-smoke"
 mkdir "$smoke_dir"
