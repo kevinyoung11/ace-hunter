@@ -83,8 +83,13 @@ git commit -m "feat: narrow potential repository rules"
 
 **Files:**
 - Create: `src/reports/potential-list.ts`
+- Create: `src/sources/github/candidate-rules.ts`
+- Modify: `src/sources/github/repository-search.ts`
+- Modify: `src/jobs/refresh-repo-metrics.ts`
+- Modify: `src/reports/report-data.ts`
 - Create: `tests/integration/reports/potential-list.test.ts`
 - Create: `tests/unit/reports/potential-list.test.ts`
+- Modify: `tests/integration/jobs/refresh-repo-metrics.test.ts`
 
 - [ ] **Step 1: Write failing read-model tests**
 
@@ -101,7 +106,7 @@ expect(result.items.map((item) => item.fullName)).toEqual(["owner/fast", "owner/
 expect(result.items[0].matchedRules).toEqual(["1d", "3d"]);
 ```
 
-Seed exact 24h/72h boundaries, one-millisecond-old exclusions, forks/archives/mirrors, future snapshots and deterministic ties. Add pure renderer assertions for source links, rule labels, timestamps, empty state and newline termination.
+Seed exact 24h/72h boundaries, 9/10/99/100 Stars, one-millisecond-old exclusions, dual matches, future creation, forks/archives/mirrors, future snapshots and deterministic ties. Add pure renderer assertions for source links, rule labels, timestamps, empty state and newline termination. Add refresh regression coverage proving a prior v1 Snapshot becomes freshly recomputed v2 provenance instead of being copied.
 
 - [ ] **Step 2: Run tests and verify RED**
 
@@ -112,14 +117,23 @@ ACE_TEST_RUNTIME_DATABASE_URL=postgres://ace_hunter_runtime:test-runtime@localho
 ACE_TEST_ADMIN_DATABASE_URL=postgres://localhost/ace_hunter_test \
 ACE_TEST_MIGRATION_DATABASE_URL=postgres://ace_hunter_migrator:test-migrator@localhost/ace_hunter_test \
 npm test -- --run tests/integration/reports/potential-list.test.ts \
-  tests/unit/reports/potential-list.test.ts
+  tests/unit/reports/potential-list.test.ts tests/integration/jobs/refresh-repo-metrics.test.ts
 ```
 
 Expected: module resolution fails because `potential-list.ts` does not exist.
 
 - [ ] **Step 3: Implement query, validation, sorting and Markdown**
 
-Export these contracts:
+First extract one shared classifier and constants:
+
+```ts
+export const candidateRuleVersion = "v2";
+export const candidateMaximumAgeMs = 3 * 86_400_000;
+export type CandidateRule = "age_1d_stars_10" | "age_3d_stars_100";
+export function classifyCandidate(input: { createdAt: Date; stars: number }, at: Date): CandidateRule[];
+```
+
+Make discovery's `candidateBuckets`, metric refresh, potential listing and report-data mapping call this function. Report SQL may restrict rows with a passed `$2` maximum-window timestamp, but must not repeat Star/age thresholds. Then export these read-model contracts:
 
 ```ts
 export type PotentialRule = "all" | "1d" | "3d";
@@ -129,7 +143,7 @@ export async function loadPotentialRepositories(pool: Pool, options: PotentialLi
 export function renderPotentialList(value: PotentialList): string;
 ```
 
-Read each active primary Repository's latest cutoff-safe Snapshot, compute rules and `starsPerHour = stars / Math.max(ageHours, 1)`, filter by rule, then sort by velocity, Stars, creation time and full name. Reject invalid dates, rules, limits, negative/unsafe counts and future-created repositories.
+Read each active primary Repository's latest cutoff-safe Snapshot, call `classifyCandidate`, compute `starsPerHour = stars / Math.max(ageHours, 1)`, filter by rule, then sort by velocity, Stars, creation time and full name. Reject invalid dates, rules, limits, negative/unsafe counts and future-created repositories. Metric refresh recomputes `candidateBuckets` and `candidateRuleVersion` from the current GitHub metadata plus core Star count on every new Snapshot.
 
 - [ ] **Step 4: Run tests and verify GREEN**
 
@@ -138,8 +152,10 @@ Run the Step 2 command. Expected: both files pass.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/reports/potential-list.ts tests/integration/reports/potential-list.test.ts \
-  tests/unit/reports/potential-list.test.ts
+git add src/reports/potential-list.ts src/sources/github/candidate-rules.ts \
+  src/sources/github/repository-search.ts src/jobs/refresh-repo-metrics.ts src/reports/report-data.ts \
+  tests/integration/reports/potential-list.test.ts tests/unit/reports/potential-list.test.ts \
+  tests/integration/jobs/refresh-repo-metrics.test.ts
 git commit -m "feat: add potential repository read model"
 ```
 
@@ -164,7 +180,7 @@ expect(result.lists.map((list) => list.period)).toEqual(["daily", "weekly", "mon
 expect(result.lists[0].items.map((item) => item.rank)).toEqual([1, 2]);
 ```
 
-Seed a prior complete batch and newer partial batch; assert the complete batch is returned. Cover independent period availability, rank order, integer/all limits, 36-hour exact stale boundary, missing complete period, repository metadata and deterministic Markdown.
+Seed a prior attributable complete batch and newer partial/running/failed batches; assert only the complete terminal-success batch is returned. Cover a newer `language!='all'` batch, mismatched JobRun counts, null/mixed lineage, independent period availability, rank order, integer/all limits, 36-hour exact stale boundary, one/two/all missing periods, repository metadata, `starsCapturedAt`, future Snapshot exclusion and deterministic Markdown.
 
 - [ ] **Step 2: Run tests and verify RED**
 
@@ -191,7 +207,7 @@ export async function loadTrendingLists(pool: Pool, options: TrendingListOptions
 export function renderTrendingLists(value: TrendingLists): string;
 ```
 
-For each requested period, select the greatest `captured_at <= now` whose rows are all successful, join Repository plus its latest cutoff-safe Snapshot for total Stars, order by rank, and apply the per-section limit. Mark stale only when age is strictly greater than 36 hours. Return `kind=not_found` only when none of the requested periods has a complete batch.
+For each requested period, select the greatest `captured_at <= now` for `language='all'` whose rows share one nonnull JobRun that completed successfully by `now`, has zero failures, and whose succeeded count equals the batch row count. Join Repository plus its latest cutoff-safe Snapshot for total Stars and expose the Snapshot observation time as `starsCapturedAt`; order by rank and apply the per-section limit. Mark stale only when age is strictly greater than 36 hours. `all` returns three explicit available/unavailable sections; a single period returns not_found when unavailable, and all-missing also marks the top-level result not_found.
 
 - [ ] **Step 4: Run tests and verify GREEN**
 
@@ -212,8 +228,13 @@ git commit -m "feat: add reliable trending read model"
 - Create: `src/cli/commands/trending.ts`
 - Modify: `src/cli/index.ts`
 - Modify: `src/cli/runtime-dependencies.ts`
+- Modify: `src/config/schema.ts`
+- Modify: `src/config/load-config.ts`
+- Modify: `scripts/run-user-command.sh`
 - Modify: `tests/integration/cli/commands.test.ts`
 - Modify: `tests/integration/cli/runtime-dependencies.test.ts`
+- Modify: `tests/unit/config/load-config.test.ts`
+- Create: `tests/unit/scripts/run-user-command-readonly.test.ts`
 
 - [ ] **Step 1: Write failing command tests**
 
@@ -224,7 +245,7 @@ expect(dependencies.potential).toHaveBeenCalledWith({ rule: "all", limit: 20 });
 expect(dependencies.trending).toHaveBeenCalledWith({ period: "daily", limit: 20 });
 ```
 
-Cover `--limit all`, integer 1/1000, rejection of 0/1001/non-integer, invalid rule/period, Markdown default and stable JSON. Add database-runtime assertions that seeded facts are returned through the actual command path.
+Cover `--limit all`, integer 1/1000, rejection of 0/1001/non-integer, invalid rule/period, Markdown default and stable JSON. Add database-runtime assertions that seeded facts are returned through the actual command path. Add configuration/wrapper tests proving both read commands start with only `ACE_HUNTER_RUNTIME_DATABASE_URL`, while legacy commands still require and retrieve the existing full credential set.
 
 - [ ] **Step 2: Run tests and verify RED**
 
@@ -235,7 +256,8 @@ ACE_TEST_RUNTIME_DATABASE_URL=postgres://ace_hunter_runtime:test-runtime@localho
 ACE_TEST_ADMIN_DATABASE_URL=postgres://localhost/ace_hunter_test \
 ACE_TEST_MIGRATION_DATABASE_URL=postgres://ace_hunter_migrator:test-migrator@localhost/ace_hunter_test \
 npm test -- --run tests/integration/cli/commands.test.ts \
-  tests/integration/cli/runtime-dependencies.test.ts
+  tests/integration/cli/runtime-dependencies.test.ts tests/unit/config/load-config.test.ts \
+  tests/unit/scripts/run-user-command-readonly.test.ts
 ```
 
 Expected: TypeScript/test failures show missing dependency methods and unregistered commands.
@@ -255,7 +277,7 @@ program.command("trending <period>")
   .option("--format <format>", "markdown or json", "markdown");
 ```
 
-Use one shared strict limit parser. Production dependencies fix `now` once per invocation, call the read model, and return `{ kind, structuredContent, renderedMarkdown }`.
+Use one shared strict limit parser. Add a read-only config schema and a lazy PostgreSQL-only runtime for the two new dependency methods; full runtime initialization remains unchanged for legacy commands. `run-user-command.sh` inspects only the exact first command token and writes only the Runtime Database URL into the temporary env file for `trending|potential`; all other commands retain the full Keychain path. Production dependencies fix `now` once per invocation, call the read model, and return `{ kind, structuredContent, renderedMarkdown }`.
 
 - [ ] **Step 4: Run tests and verify GREEN**
 
@@ -265,8 +287,9 @@ Run the Step 2 command. Expected: both CLI suites pass.
 
 ```bash
 git add src/cli/commands/potential.ts src/cli/commands/trending.ts src/cli/index.ts \
-  src/cli/runtime-dependencies.ts tests/integration/cli/commands.test.ts \
-  tests/integration/cli/runtime-dependencies.test.ts
+  src/cli/runtime-dependencies.ts src/config/schema.ts src/config/load-config.ts scripts/run-user-command.sh \
+  tests/integration/cli/commands.test.ts tests/integration/cli/runtime-dependencies.test.ts \
+  tests/unit/config/load-config.test.ts tests/unit/scripts/run-user-command-readonly.test.ts
 git commit -m "feat: expose GitHub signal commands"
 ```
 
@@ -282,7 +305,7 @@ git commit -m "feat: expose GitHub signal commands"
 
 - [ ] **Step 1: Write failing schedule and Skill assertions**
 
-Change the schedule expectation to `7 0 * * *`. Assert Skill instructions contain the exact deployment-managed commands for all four Trending views and all three potential rule views, preserve source/capture/stale fields, and do not route these requests through `today`.
+Change the schedule expectation to `7 0 * * *`. Assert a `daily|weekly|monthly` matrix with `fail-fast: false` and one period-parameterized command, so one failed child cannot skip the others. Assert Skill instructions contain the exact deployment-managed commands for all four Trending views and all three potential rule views, preserve source/capture/stale fields, and do not route these requests through `today`.
 
 - [ ] **Step 2: Run tests and verify RED**
 
@@ -297,11 +320,17 @@ Expected: schedule test fails on the existing four-hour cron and Skill assertion
 
 - [ ] **Step 3: Apply configuration and documentation changes**
 
-Set:
+Set the daily independent matrix:
 
 ```yaml
 on:
   schedule: [{ cron: '7 0 * * *' }]
+jobs:
+  collect:
+    strategy:
+      fail-fast: false
+      matrix:
+        period: [daily, weekly, monthly]
 ```
 
 Document the new CLI routes in the Skill, update the agent default prompt without exceeding manifest limits, and replace the old candidate thresholds in the product specification with candidate-v2.
@@ -322,9 +351,21 @@ git commit -m "feat: schedule and document minimal GitHub signals"
 ### Task 6: Full verification and live acceptance
 
 **Files:**
-- Modify only if a failing acceptance test proves a defect in Tasks 1–5.
+- Modify: `ops/launchd/deploy-main.sh`
+- Modify: `scripts/continue-post-merge-release.sh`
+- Modify: `scripts/post-merge-acceptance.ts`
+- Modify: `tests/unit/operations/deploy-main.test.ts`
+- Modify: `tests/unit/scripts/post-merge-acceptance.test.ts`
 
-- [ ] **Step 1: Run the complete local verification matrix**
+- [ ] **Step 1: Write and observe failing release-acceptance tests**
+
+Require deploy and continuation smokes for `potential --format json` plus all four Trending views, immutable-release Skill prompts for a representative Trending period and potential projects, and post-merge database assertions for candidate-v2 Snapshot provenance and terminal attributable complete batches. Require the existing deployment transaction to restore the prior `current`, wrapper and Skill link if any post-switch CLI smoke fails.
+
+- [ ] **Step 2: Implement acceptance coverage and verify focused GREEN**
+
+Make the smallest deployment/continuation/acceptance script changes that satisfy Step 1 without printing secrets or deleting historical production data. Run the focused deploy/acceptance unit tests until green.
+
+- [ ] **Step 3: Run the complete local verification matrix**
 
 ```bash
 ACE_TEST_RUNTIME_DATABASE_URL=postgres://ace_hunter_runtime:test-runtime@localhost/ace_hunter_test \
@@ -340,18 +381,18 @@ git diff --check
 
 Expected: all commands exit 0; only opt-in live suites remain skipped.
 
-- [ ] **Step 2: Run read-only production compatibility checks**
+- [ ] **Step 4: Run read-only production compatibility checks**
 
 Against the existing runtime role, execute the feature build's `trending daily/weekly/monthly/all` and `potential` commands in JSON mode. Verify no Schema migration is needed, every link/capture time matches a direct read-only Supabase query, limits are honored, and no X/model credential is required by these paths.
 
-- [ ] **Step 3: Review, push and open PR**
+- [ ] **Step 5: Review, push and open PR**
 
 Review scoped diff/status, push `codex/minimal-github-signals`, open a PR against `main` with behavior and verification evidence, wait for CI, and address failures using systematic debugging.
 
-- [ ] **Step 4: Merge and create the immutable release**
+- [ ] **Step 6: Merge and create the immutable release**
 
 After CI passes, merge the PR with a Merge Commit. Fetch the exact remote main SHA, create and validate the immutable Ace Hunter release, atomically switch `current`, and update the installed Skill link without exposing or rotating credentials.
 
-- [ ] **Step 5: Run real collection and Skill acceptance**
+- [ ] **Step 7: Run real collection and Skill acceptance**
 
 From the final immutable release, invoke each Trending period with a new current scheduled timestamp and invoke discovery with a conservative insertion cap. Verify exact attributed Job Runs, latest complete batches, candidate-v2 provenance and idempotent replay without deleting historical facts. Then use `$ace-hunter` through Codex to request GitHub daily/weekly/monthly lists and potential projects; verify the installed Skill returns source links, rule labels, capture time and stale state faithfully.
