@@ -72,7 +72,7 @@ describe("Codex release binary resolution", () => {
   });
 });
 
-function resolve(overrides: NodeJS.ProcessEnv) {
+function resolve(overrides: Record<string, string | undefined>) {
   return execFileSync(process.execPath, ["scripts/resolve-codex-binary.mjs"], {
     cwd: process.cwd(),
     encoding: "utf8",

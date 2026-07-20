@@ -7,7 +7,7 @@ export interface HttpTransport {
   close(): Promise<void>;
 }
 
-export function createHttpTransport(env: NodeJS.ProcessEnv): HttpTransport {
+export function createHttpTransport(env: Record<string, string | undefined>): HttpTransport {
   const httpProxy = env.HTTP_PROXY ?? env.http_proxy;
   const httpsProxy = env.HTTPS_PROXY ?? env.https_proxy;
   const noProxy = env.NO_PROXY ?? env.no_proxy;
