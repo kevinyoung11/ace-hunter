@@ -1,0 +1,3 @@
+import { describe, expect, it } from "vitest";
+import { JOB_CATALOG, jobDefinition, validateJobRequest } from "../../../src/ops/job-catalog.js";
+describe("job catalog",()=>{it("contains exactly nine fixed jobs",()=>expect(JOB_CATALOG).toHaveLength(9));it("rejects executor/capability spoofing",()=>{expect(()=>validateJobRequest({name:"collect_x_posts",executor:"github"})).toThrow("executor_mismatch");expect(()=>validateJobRequest({name:"collect_x_posts",capability:"github.trending"})).toThrow("capability_mismatch");});it("rejects unknown names",()=>expect(()=>jobDefinition("evil")).toThrow("unknown_job"));});
