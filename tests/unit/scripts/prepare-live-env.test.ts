@@ -138,7 +138,7 @@ describe("prepare-live-env safety helpers", () => {
   });
 
   it("only atomically replaces credentials after read and rollback-scoped write probes", async () => {
-    const store = { get: vi.fn(async (account: string) => account.startsWith("migration") ? "old-migration" : "old-runtime"), set: vi.fn(), delete: vi.fn() };
+    const store = { get: vi.fn(async (account: string) => account.startsWith("migration") ? "old-migration" : "old-runtime"), set: vi.fn(), setPair: vi.fn(), delete: vi.fn() };
     const admin = { query: vi.fn() };
     const result = await recoverFixedRoleCredentials({
       keychain: store,
@@ -149,6 +149,16 @@ describe("prepare-live-env safety helpers", () => {
       verify: vi.fn(async () => undefined),
     });
     expect(result).toEqual({ migrationUrl: expect.any(String), runtimeUrl: expect.any(String) });
-    expect(store.set).toHaveBeenCalled();
+    expect(store.setPair).toHaveBeenCalled();
+  });
+
+  it("fails recovery when the store cannot atomically replace both DSNs", async () => {
+    const store = { get: vi.fn(async () => "old"), set: vi.fn(), delete: vi.fn() };
+    await expect(recoverFixedRoleCredentials({ keychain: store, admin: { query: vi.fn() }, adminUrl: "postgres://admin:x@db.example.test:5432/postgres", migrationUrl: "postgres://ace_hunter_migrator:new@db.example.test:5432/postgres", runtimeUrl: "postgres://ace_hunter_runtime:new@db.example.test:5432/postgres", verify: vi.fn(async () => undefined) })).rejects.toThrow("database_credential_recovery_required");
+    expect(store.set).not.toHaveBeenCalled();
+  });
+
+  it("requires recovery mode to provide candidate role passwords", async () => {
+    expect(() => parseSourceDotenv("ACE_HUNTER_ADMIN_DATABASE_URL=postgres://admin:x@db/postgres\n")).not.toThrow();
   });
 });

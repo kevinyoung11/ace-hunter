@@ -12,7 +12,7 @@ import { verifyRuntimeCredential } from "./verify-runtime-credential.js";
 
 type Queryable = { query(sql: string, values?: unknown[]): Promise<{ rows: Array<Record<string, unknown>> }> };
 export type CredentialStore = { get(account: string): Promise<string | null>; set(account: string, value: string): Promise<void>; delete(account: string): Promise<void>; setPair?: (migrationUrl: string, runtimeUrl: string) => Promise<void> };
-export type LiveMode = "bootstrap" | "local" | "release";
+export type LiveMode = "bootstrap" | "local" | "release" | "recover";
 const ROLE_NAMES = new Set(["ace_hunter_migrator", "ace_hunter_runtime"]);
 const KEYCHAIN_ACCOUNTS = { migration: "migration-database-url", runtime: "runtime-database-url" } as const;
 const STORE_KEYS = {
@@ -155,18 +155,13 @@ export async function recoverFixedRoleCredentials(options: {
   verify?: (url: string) => Promise<void>;
 }): Promise<{ migrationUrl: string; runtimeUrl: string }> {
   try {
+    if (!options.keychain.setPair) throw new Error("atomic_credential_store_required");
     validateRoleDsn(options.migrationUrl, "ace_hunter_migrator", options.adminUrl);
     validateRoleDsn(options.runtimeUrl, "ace_hunter_runtime", options.adminUrl);
     const verify = options.verify ?? verifyRuntimeCredential;
     await verify(options.migrationUrl);
     await verify(options.runtimeUrl);
-    const previousMigration = await options.keychain.get(KEYCHAIN_ACCOUNTS.migration);
-    if (options.keychain.setPair) await options.keychain.setPair(options.migrationUrl, options.runtimeUrl);
-    else {
-      await options.keychain.set(KEYCHAIN_ACCOUNTS.migration, options.migrationUrl);
-      try { await options.keychain.set(KEYCHAIN_ACCOUNTS.runtime, options.runtimeUrl); }
-      catch (error) { if (previousMigration) await options.keychain.set(KEYCHAIN_ACCOUNTS.migration, previousMigration); throw error; }
-    }
+    await options.keychain.setPair(options.migrationUrl, options.runtimeUrl);
     return { migrationUrl: options.migrationUrl, runtimeUrl: options.runtimeUrl };
   } catch (error) {
     if (error instanceof Error && error.message === "database_credential_recovery_required") throw error;
@@ -309,9 +304,17 @@ async function main(): Promise<void> {
   });
   let completed = false;
   try {
+    const store = createFileCredentialStore(args.credentialStore);
+    // Release/local must prove the existing fixed credentials before any
+    // schema bootstrap or ALTER ROLE can mutate the external database.
+    const credentials = args.mode === "bootstrap" || args.mode === "recover"
+      ? undefined
+      : await fixedRoleCredentials({ mode: args.mode, keychain: store, admin, adminUrl: source.adminUrl });
     await recordAdminCatalog(admin, fingerprintPath);
-    await bootstrapFixedRolesAndSchema(admin);
-    const credentials = await fixedRoleCredentials({ mode: args.mode, keychain: createFileCredentialStore(args.credentialStore), admin, adminUrl: source.adminUrl });
+    if (args.mode === "bootstrap") await bootstrapFixedRolesAndSchema(admin);
+    const selectedCredentials = credentials ?? (args.mode === "recover"
+      ? await recoverFromAdmin({ admin, adminUrl: source.adminUrl, store })
+      : await fixedRoleCredentials({ mode: "bootstrap", keychain: store, admin, adminUrl: source.adminUrl }));
     const selected = source.userId
       ? await admin.query("select id from auth.users where id=$1", [source.userId])
       : await admin.query("select id from auth.users order by created_at,id limit 1");
@@ -320,8 +323,8 @@ async function main(): Promise<void> {
     const checksum = createHash("sha256").update(migration).digest("hex");
     await writeFile(envPath, serializeDotenv({
       ACE_HUNTER_ADMIN_DATABASE_URL: source.adminUrl,
-      ACE_HUNTER_MIGRATION_DATABASE_URL: credentials.migrationUrl,
-      ACE_HUNTER_RUNTIME_DATABASE_URL: credentials.runtimeUrl,
+      ACE_HUNTER_MIGRATION_DATABASE_URL: selectedCredentials.migrationUrl,
+      ACE_HUNTER_RUNTIME_DATABASE_URL: selectedCredentials.runtimeUrl,
       ACE_HUNTER_MIGRATION_SHA256: checksum,
       ACE_HUNTER_USER_ID: String(selected.rows[0].id),
       ACE_HUNTER_GITHUB_TOKEN: source.githubToken,
@@ -341,12 +344,25 @@ async function main(): Promise<void> {
   }
 }
 
+async function recoverFromAdmin(options: { admin: Queryable; adminUrl: string; store: CredentialStore }): Promise<{ migrationUrl: string; runtimeUrl: string }> {
+  try {
+    const generate = () => randomBytes(32).toString("base64url");
+    const migrationUrl = buildRoleUrl(options.adminUrl, "ace_hunter_migrator", generate());
+    const runtimeUrl = buildRoleUrl(options.adminUrl, "ace_hunter_runtime", generate());
+    await setFixedRolePassword(options.admin, "ace_hunter_migrator", new URL(migrationUrl).password);
+    await setFixedRolePassword(options.admin, "ace_hunter_runtime", new URL(runtimeUrl).password);
+    return await recoverFixedRoleCredentials({ keychain: options.store, admin: options.admin, adminUrl: options.adminUrl, migrationUrl, runtimeUrl });
+  } catch {
+    throw new Error("database_credential_recovery_required");
+  }
+}
+
 function parseArguments(args: string[]): { mode: LiveMode; source: string; credentialStore: string } {
   let mode: LiveMode | undefined, source: string | undefined, credentialStore: string | undefined;
   for (let index = 0; index < args.length; index += 2) {
     const flag = args[index], value = args[index + 1];
     if (!value) throw new Error("usage_error");
-    if (flag === "--mode" && ["bootstrap", "local", "release"].includes(value)) mode = value as LiveMode;
+    if (flag === "--mode" && ["bootstrap", "local", "release", "recover"].includes(value)) mode = value as LiveMode;
     else if (flag === "--source") source = value;
     else if (flag === "--credential-store") credentialStore = value;
     else throw new Error("usage_error");

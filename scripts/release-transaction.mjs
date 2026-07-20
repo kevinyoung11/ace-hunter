@@ -10,13 +10,14 @@ const agentName = "com.kevinyoung.ace-hunter.collect-x.plist";
 const agentLabel = agentName.replace(/\.plist$/u, "");
 
 try {
-  if (!isAbsolute(transaction ?? "") || !["begin", "verify", "rollback", "commit", "launchd-mode"].includes(action)) {
+  if (!isAbsolute(transaction ?? "") || !["begin", "verify", "rollback", "commit", "launchd-mode", "mark-external-db-modified"].includes(action)) {
     throw new Error("release_transaction_usage_error");
   }
   if (action === "begin") await begin();
   else if (action === "verify") await loadState("active");
   else if (action === "rollback") await rollback();
   else if (action === "commit") await commit();
+  else if (action === "mark-external-db-modified") await markExternalDbModified();
   else {
     const state = await loadState("active");
     process.stdout.write(state.launchd.disabledOverride === true ? "enable\n" : "preserve\n");
@@ -55,7 +56,7 @@ async function begin() {
   // Local artifacts are rollback-safe; external database role passwords are
   // intentionally not claimed reversible by this transaction.
   await writeState({ version: 3, status: "active", uid: process.getuid?.(), paths, artifacts, launchd,
-    externalDatabase: { passwordState: "not_rollbackable" } });
+    externalDatabase: { passwordState: "not_modified" } });
 }
 
 function probeLaunchd(domain) {
@@ -144,6 +145,12 @@ async function commit() {
   await writeState(state);
 }
 
+async function markExternalDbModified() {
+  const state = await loadState("active");
+  state.externalDatabase.passwordState = "modified_requires_manual_recovery";
+  await writeState(state);
+}
+
 async function loadState(expectedStatus) {
   await assertOwnerOnly(transaction);
   const statePath = join(transaction, "state.json");
@@ -157,7 +164,7 @@ async function loadState(expectedStatus) {
   if (state.version !== 3 || state.uid !== process.getuid?.() || typeof state.paths !== "object" ||
       typeof state.artifacts !== "object" || typeof state.status !== "string" ||
       typeof state.launchd?.loaded !== "boolean" || !validDisabledOverride ||
-      state.externalDatabase?.passwordState !== "not_rollbackable") throw new Error("release_transaction_invalid");
+      !["not_modified", "modified_requires_manual_recovery"].includes(state.externalDatabase?.passwordState)) throw new Error("release_transaction_invalid");
   if (expectedStatus !== undefined && state.status !== expectedStatus) throw new Error("release_transaction_not_active");
   return state;
 }
