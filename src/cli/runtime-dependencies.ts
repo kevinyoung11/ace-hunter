@@ -46,6 +46,7 @@ import { CommandService } from "../ops/command-service.js";
 import { JobCommandStore } from "../db/stores/job-command-store.js";
 import { WorkerHeartbeatStore } from "../db/stores/worker-heartbeat-store.js";
 import { MacXWorker } from "../worker/mac-x-worker.js";
+import { GitHubCommandExecutor } from "../ops/github-dispatcher.js";
 
 export interface DatabaseCliOptions {
   pool: Pool;
@@ -55,6 +56,7 @@ export interface DatabaseCliOptions {
   createProductFromGithub?: (fullName: string) => Promise<{ productId: string }>;
   observeResolved?: (productId: string) => Promise<CommandOutput>;
   runJob?: (input: JobInput) => Promise<CommandOutput>;
+  runCommand?: (commandId: string, workerId: string) => Promise<CommandOutput>;
   worker?: (options: { workerId: string; once: boolean; pollSeconds: number }) => Promise<CommandOutput>;
 }
 
@@ -90,6 +92,11 @@ export function createLazyProductionCliRuntime(
       listMonitors: async () => (await getFull()).dependencies.listMonitors(),
       unfollow: async (target) => (await getFull()).dependencies.unfollow(target),
       runJob: async (input) => (await getFull()).dependencies.runJob(input),
+      runCommand: async (commandId, workerId) => {
+        const run = (await getFull()).dependencies.runCommand;
+        if (!run) throw codedError("configuration_error");
+        return run(commandId, workerId);
+      },
       worker: async (options) => (await getFull()).dependencies.worker?.(options) ?? { kind: "worker_unavailable" },
     },
     close: async () => {
@@ -134,6 +141,7 @@ async function createReadonlyProductionCliRuntime(
       listMonitors: unavailable,
       unfollow: unavailable,
       runJob: unavailable,
+      runCommand: unavailable,
       worker: unavailable,
     },
     close: async () => pool.end(),
@@ -174,6 +182,11 @@ async function createProductionCliRuntime(
     undefined,
     new WorkerHeartbeatStore(pool),
   );
+  const githubCommandExecutor = new GitHubCommandExecutor(new JobCommandStore(pool), runJob);
+  const runCommand = async (commandId: string, workerId: string): Promise<CommandOutput> => {
+    const result = await githubCommandExecutor.execute(commandId, workerId);
+    return { kind: "job_run", runId: result.runId, status: result.status, executed: true };
+  };
   const worker = async (options: { workerId: string; once: boolean; pollSeconds: number }): Promise<CommandOutput> => {
     const instance = new MacXWorker({
       service: commandService,
@@ -190,6 +203,7 @@ async function createProductionCliRuntime(
     io,
     runJob,
     worker,
+    runCommand,
     createProductFromGithub: async (fullName) => {
       const operation = await github.openOperation();
       try {
@@ -368,6 +382,7 @@ export function createDatabaseCliDependencies(options: DatabaseCliOptions): CliD
     listMonitors: async () => listMonitors(options.pool, options.userId),
     unfollow: async (target) => monitorResolved(options, await resolve(target), false, now()),
     runJob: options.runJob ?? (async () => { throw codedError("configuration_error"); }),
+    runCommand: options.runCommand ?? (async () => { throw codedError("configuration_error"); }),
     worker: options.worker,
   };
 }

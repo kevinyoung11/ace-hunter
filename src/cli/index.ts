@@ -9,6 +9,7 @@ import type { TrendingListPeriod } from "../reports/trending-list.js";
 import { registerAnalyzeCommand } from "./commands/analyze.js";
 import { registerFollowCommands } from "./commands/follow.js";
 import { registerJobCommand } from "./commands/jobs.js";
+import { registerCommandCommand } from "./commands/command.js";
 import { registerMonitorsCommand } from "./commands/monitors.js";
 import { registerObserveCommand } from "./commands/observe.js";
 import { registerPotentialCommand } from "./commands/potential.js";
@@ -30,6 +31,7 @@ export interface CliDependencies {
   listMonitors(): Promise<CommandOutput>;
   unfollow(target: string): Promise<CommandOutput>;
   runJob(input: JobInput): Promise<CommandOutput>;
+  runCommand?: (commandId: string, workerId: string) => Promise<CommandOutput>;
   worker?(options: { workerId: string; once: boolean; pollSeconds: number }): Promise<CommandOutput>;
   io: CliIo;
   now?: () => Date;
@@ -50,6 +52,7 @@ export function createProgram(dependencies: CliDependencies): Command {
   registerFollowCommands(program, dependencies);
   registerMonitorsCommand(program, dependencies);
   registerJobCommand(program, dependencies);
+  registerCommandCommand(program, dependencies);
   registerWorkerCommand(program, dependencies);
   return program;
 }
@@ -71,6 +74,7 @@ export function unavailableDependencies(io: CliIo = processIo): CliDependencies 
     listMonitors: unavailable,
     unfollow: unavailable,
     runJob: unavailable,
+    runCommand: unavailable,
     worker: unavailable,
     io,
   };

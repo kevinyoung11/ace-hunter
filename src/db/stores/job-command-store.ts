@@ -6,6 +6,11 @@ type Row = {id:string;job_name:string;executor:Executor;capability:string;parame
 const map=(r:Row):JobCommand=>({id:r.id,jobName:r.job_name,executor:r.executor,capability:r.capability,parameters:r.parameters,status:r.status,idempotencyKey:r.idempotency_key,scheduledFor:r.scheduled_for,jobRunId:r.job_run_id});
 export class JobCommandStore {
   public constructor(private readonly db: Queryable) {}
+  public async get(commandId:string):Promise<JobCommand|null>{ const r=await this.db.query<Row>(`select * from ace_hunter.get_job_command($1)`,[commandId]); return r.rows[0]?map(r.rows[0]):null; }
+  public async claim(commandId:string,workerId:string,executor:Executor,capabilities:string[]):Promise<JobCommand|null>{ return this.call("claim_job_command",[commandId,workerId,executor,capabilities]); }
+  public async start(commandId:string,workerId:string):Promise<JobCommand|null>{ return this.call("start_job_command",[commandId,workerId]); }
+  public async bind(commandId:string,workerId:string,jobRunId:string):Promise<JobCommand|null>{ return this.call("bind_job_run",[commandId,workerId,jobRunId]); }
+  public async complete(commandId:string,workerId:string,status:CommandStatus,errorCode?:string,errorMessage?:string):Promise<JobCommand|null>{ return this.call("complete_job_command",[commandId,workerId,status,errorCode??null,errorMessage??null]); }
   public async create(input:{jobName:string;executor:Executor;capability:string;parameters:Record<string,unknown>;idempotencyKey:string;scheduledFor?:Date}):Promise<JobCommand>{
     const r=await this.db.query<Row>(`select * from ace_hunter.create_job_command($1,$2,$3,$4::jsonb,$5,$6)`,[input.jobName,input.executor,input.capability,JSON.stringify(input.parameters),input.idempotencyKey,input.scheduledFor??null]);
     return map(r.rows[0]);
