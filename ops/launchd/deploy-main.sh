@@ -20,7 +20,6 @@ cleanup_trusted() {
   return 0
 }
 node_path="$("${repo_root}/scripts/resolve-node22.sh")"
-"$node_path" "$transaction_helper" verify "$transaction" >/dev/null
 rollback_exit() {
   local status="$1"
   trap - ERR HUP INT TERM
@@ -32,6 +31,8 @@ trap 'rollback_exit $?' ERR
 trap 'rollback_exit 129' HUP
 trap 'rollback_exit 130' INT
 trap 'rollback_exit 143' TERM
+
+"$node_path" "$transaction_helper" verify "$transaction" >/dev/null
 
 git fetch --quiet origin main
 remote_main="$(git rev-parse origin/main)"
