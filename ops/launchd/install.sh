@@ -96,8 +96,8 @@ plutil -lint "${agent}.tmp" >/dev/null
 chmod 600 "${agent}.tmp"
 mv -f "${agent}.tmp" "$agent"
 launchctl bootout "$domain" "$agent" >/dev/null 2>&1 || true
-launchctl bootstrap "$domain" "$agent"
-[[ "$launchd_mode" = enable ]] && launchctl enable "${domain}/com.kevinyoung.ace-hunter.collect-x"
+"${release_root}/scripts/activate-launch-agent.sh" "$launchd_mode" "$domain" "$agent" \
+  "${domain}/com.kevinyoung.ace-hunter.collect-x"
 trap - ERR HUP INT TERM
 rm -rf "$transaction"
 printf 'launchd_installed\n'
