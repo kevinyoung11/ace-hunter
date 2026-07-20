@@ -33,8 +33,15 @@ export function TrendingBoard({ initialItems }: TrendingBoardProps) {
     setState("loading");
     try {
       const response = await fetch(`/api/trending?period=${nextPeriod}`);
-      if (!response.ok) throw new Error("trending request failed");
       const payload: unknown = await response.json();
+      if (!response.ok) {
+        if (response.status === 404 && isTrendingUnavailable(payload, nextPeriod)) {
+          setItems([]);
+          setState("ready");
+          return;
+        }
+        throw new Error("trending request failed");
+      }
       setItems(readTrendingItems(payload));
       setState("ready");
     } catch {
@@ -127,5 +134,18 @@ function isTrendingRepository(value: unknown): value is TrendingRepository {
       && typeof value.repoUrl === "string"
       && "language" in value
       && typeof value.language === "string",
+  );
+}
+
+function isTrendingUnavailable(payload: unknown, period: TrendingPeriod): boolean {
+  return Boolean(
+    payload
+      && typeof payload === "object"
+      && "kind" in payload
+      && payload.kind === "not_found"
+      && "reason" in payload
+      && payload.reason === "trending_unavailable"
+      && "period" in payload
+      && payload.period === period,
   );
 }

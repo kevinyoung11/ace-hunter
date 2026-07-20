@@ -27,9 +27,9 @@ describe("SkillHomepage", () => {
     expect(screen.getByText("Prompt Saver").getAttribute("href")).toBe("https://example.com/prompt-saver");
     expect(screen.getByText("保存可复用的提示词。")).not.toBeNull();
     expect(screen.getByRole("link", { name: "打开控制台" }).getAttribute("href")).toBe("/console");
-    expect(screen.getByText("发现：从趋势信号中找到适合当前任务的能力。")).not.toBeNull();
-    expect(screen.getByText("安装：把选中的 Skill 接入自己的工作流。")).not.toBeNull();
-    expect(screen.getByText("持续更新：跟踪能力变化，及时获得新的可用方案。")).not.toBeNull();
+    expect(screen.getByText("发现项目：从趋势信号中找到适合当前任务的项目。")).not.toBeNull();
+    expect(screen.getByText("分析指定仓库：输入 owner/repo 获取当前项目观察。")).not.toBeNull();
+    expect(screen.getByText("持续关注：持续跟踪已关注项目的变化。")).not.toBeNull();
   });
 });
 
@@ -57,6 +57,20 @@ describe("TrendingBoard", () => {
     fireEvent.click(screen.getByRole("button", { name: "本月" }));
 
     expect(await screen.findByText("暂无本月趋势 Skill。")).not.toBeNull();
+  });
+
+  it("treats the API's unavailable trending response as an empty state", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: false,
+      status: 404,
+      json: async () => ({ kind: "not_found", reason: "trending_unavailable", period: "weekly" }),
+    }));
+    render(<TrendingBoard initialItems={[]} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "本周" }));
+
+    expect(await screen.findByText("暂无本周趋势 Skill。")).not.toBeNull();
+    expect(screen.queryByText("趋势榜暂时无法加载，请稍后重试。")).toBeNull();
   });
 
   it("states when the selected period cannot be loaded", async () => {

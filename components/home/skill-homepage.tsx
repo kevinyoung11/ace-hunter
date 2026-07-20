@@ -31,9 +31,9 @@ export function SkillHomepage({ dailyTopSignal, initialTrending = [] }: SkillHom
       <section id="install" aria-labelledby="capabilities-heading">
         <h2 id="capabilities-heading">Skill 能做什么</h2>
         <ul>
-          <li>发现：从趋势信号中找到适合当前任务的能力。</li>
-          <li>安装：把选中的 Skill 接入自己的工作流。</li>
-          <li>持续更新：跟踪能力变化，及时获得新的可用方案。</li>
+          <li>发现项目：从趋势信号中找到适合当前任务的项目。</li>
+          <li>分析指定仓库：输入 owner/repo 获取当前项目观察。</li>
+          <li>持续关注：持续跟踪已关注项目的变化。</li>
         </ul>
       </section>
 
