@@ -69,6 +69,16 @@ describe("immutable release signal acceptance", () => {
     expect(continuation).toContain('>"${smoke_dir}/skill-weekly.json"');
     expect(continuation).toContain('>"${smoke_dir}/skill-potential.json"');
   });
+
+  it("captures and semantically verifies list and observe Skill routes", async () => {
+    const continuation = await readFile("scripts/continue-post-merge-release.sh", "utf8");
+    expect(continuation).toContain('>"${smoke_dir}/direct-list.json"');
+    expect(continuation).toContain('>"${smoke_dir}/skill-list.json"');
+    expect(continuation).toContain('>"${smoke_dir}/skill-observe.json"');
+    expect(continuation).toContain("validate-codex-skill-output.js");
+    expect(continuation).toContain('"${smoke_dir}/direct-list.json" "${smoke_dir}/skill-list.json"');
+    expect(continuation).toContain('"${smoke_dir}/skill-observe.json"');
+  });
 });
 
 describe("post-merge database facts", () => {
@@ -107,6 +117,14 @@ describe("post-merge database facts", () => {
     expect(acceptance).toContain("verifyAcceptedSignalOutput");
     expect(acceptance).toContain('expectedSmokeDir: join(dirname(runsPath), "release-rollback", "continuation-smoke")');
     expect(continuation).toContain('SIGNAL_SMOKE_DIR="$smoke_dir"');
+  });
+
+  it("binds the observed Skill result to a persisted realtime observation", async () => {
+    const acceptance = await readFile("scripts/post-merge-acceptance.ts", "utf8");
+    expect(acceptance).toContain('skill-observe.json');
+    expect(acceptance).toContain("observationId");
+    expect(acceptance).toContain("output_type='realtime_observation'");
+    expect(acceptance).toContain("missing_skill_realtime_observation");
   });
 
   it("keeps production history read-only during fact verification", async () => {

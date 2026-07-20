@@ -99,6 +99,13 @@ try {
       period: row.period, capturedAt: row.captured_at, jobRunId: row.job_run_id,
     })),
   });
+  const skillObservation = z.object({
+    kind: z.literal("realtime_observation"), observationId: z.string().uuid(),
+  }).passthrough().parse(JSON.parse(await readFile(join(smokeDir, "skill-observe.json"), "utf8")));
+  const persistedSkillObservation = await pool.query(`select id from ace_hunter.analysis_outputs
+    where id=$1 and output_type='realtime_observation' and status in ('complete','partial')
+      and created_at >= $2`, [skillObservation.observationId, startedAt]);
+  if (persistedSkillObservation.rowCount !== 1) throw new Error("missing_skill_realtime_observation");
   const outputs = await pool.query<{ output_type: string }>(`select output_type from ace_hunter.analysis_outputs
     where (output_type='daily_report' and completed_at >= $1)
        or (output_type='realtime_observation' and created_at >= $1)`, [startedAt]);

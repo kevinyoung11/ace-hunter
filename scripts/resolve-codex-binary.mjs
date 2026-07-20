@@ -19,7 +19,7 @@ try {
   } else {
     const appBinary = process.env.ACE_HUNTER_CODEX_APP_BINARY ??
       "/Applications/ChatGPT.app/Contents/Resources/codex";
-    const candidates = [appBinary, findOnPath("codex")]
+    const candidates = [appBinary, ...findAllOnPath("codex")]
       .filter((path) => path !== undefined)
       .map((path) => inspect(path))
       .filter((candidate) => candidate !== undefined);
@@ -51,18 +51,19 @@ function inspect(path) {
   }
 }
 
-function findOnPath(name) {
+function findAllOnPath(name) {
+  const candidates = [];
   for (const directory of (process.env.PATH ?? "").split(delimiter)) {
     if (!directory) continue;
     const candidate = join(directory, name);
     try {
       accessSync(candidate, constants.X_OK);
-      return candidate;
+      candidates.push(candidate);
     } catch {
       // Keep searching.
     }
   }
-  return undefined;
+  return candidates;
 }
 
 function parseVersion(value) {

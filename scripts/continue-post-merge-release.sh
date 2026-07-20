@@ -104,20 +104,27 @@ env -i HOME="$HOME" PATH="/usr/bin:/bin" ACE_HUNTER_ENV_FILE="$readonly_env" "$n
 env -i HOME="$HOME" PATH="/usr/bin:/bin" ACE_HUNTER_ENV_FILE="$readonly_env" "$node_path" "${release}/dist/src/cli/index.js" trending all --format json >"${smoke_dir}/all.json"
 chmod 600 "${smoke_dir}"/*.json
 wrapper="${HOME}/Library/Application Support/AceHunter/bin/ace-hunter"
+"$wrapper" list >"${smoke_dir}/direct-list.json"
 "$wrapper" observe "$ACE_E2E_REPOSITORY" --format json >/dev/null
 codex_binary="$("$node_path" "${release}/scripts/resolve-codex-binary.mjs")"
 codex_smoke="${release}/scripts/run-codex-skill-smoke.sh"
 CODEX_HOME="${CODEX_HOME:-$HOME/.codex}" "$codex_smoke" "$codex_binary" list \
-  'Use $ace-hunter to list monitored products. Return only the tool result.' >/dev/null
+  'Use $ace-hunter to run ace-hunter list. Return only the exact JSON tool result.' \
+  >"${smoke_dir}/skill-list.json"
 CODEX_HOME="${CODEX_HOME:-$HOME/.codex}" "$codex_smoke" "$codex_binary" observe \
-  "Use \$ace-hunter to observe ${ACE_E2E_REPOSITORY}. Return only the tool result." >/dev/null
+  "Use \$ace-hunter to run ace-hunter observe ${ACE_E2E_REPOSITORY} --format json. Return only the exact JSON tool result." \
+  >"${smoke_dir}/skill-observe.json"
 CODEX_HOME="${CODEX_HOME:-$HOME/.codex}" "$codex_smoke" "$codex_binary" weekly \
   'Use $ace-hunter to run ace-hunter trending weekly --format json. Return only the exact JSON tool result.' \
   >"${smoke_dir}/skill-weekly.json"
 CODEX_HOME="${CODEX_HOME:-$HOME/.codex}" "$codex_smoke" "$codex_binary" potential \
   'Use $ace-hunter to run ace-hunter potential --format json. Return only the exact JSON tool result.' \
   >"${smoke_dir}/skill-potential.json"
-chmod 600 "${smoke_dir}/skill-weekly.json" "${smoke_dir}/skill-potential.json"
+chmod 600 "${smoke_dir}/direct-list.json" "${smoke_dir}/skill-list.json" \
+  "${smoke_dir}/skill-observe.json" "${smoke_dir}/skill-weekly.json" "${smoke_dir}/skill-potential.json"
+"$node_path" "${release}/dist/scripts/validate-codex-skill-output.js" \
+  "${smoke_dir}/direct-list.json" "${smoke_dir}/skill-list.json" \
+  "${smoke_dir}/skill-observe.json" >/dev/null
 "$node_path" "${release}/dist/scripts/validate-signal-release.js" require-fresh \
   "${smoke_dir}/potential.json" "${smoke_dir}/daily.json" "${smoke_dir}/weekly.json" \
   "${smoke_dir}/monthly.json" "${smoke_dir}/all.json" "${smoke_dir}/skill-weekly.json" \

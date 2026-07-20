@@ -26,6 +26,20 @@ describe("Codex release binary resolution", () => {
     expect(pathCodex).not.toBe(appCodex);
   });
 
+  it("keeps searching PATH when an earlier Codex is too old", async () => {
+    const root = await temporaryRoot();
+    await fakeCodex(join(root, "old", "codex"), "0.142.0");
+    const compatible = await fakeCodex(join(root, "compatible", "codex"), "0.146.0");
+    const appCodex = await fakeCodex(join(root, "app", "codex"), "0.144.0");
+
+    const resolved = resolve({
+      PATH: `${join(root, "old")}:${join(root, "compatible")}:/usr/bin:/bin`,
+      ACE_HUNTER_CODEX_APP_BINARY: appCodex,
+    });
+
+    expect(resolved).toBe(`${await realpath(compatible)}\n`);
+  });
+
   it("honors an explicit absolute executable and validates its version", async () => {
     const root = await temporaryRoot();
     const explicit = await fakeCodex(join(root, "explicit", "codex"), "0.146.0");
