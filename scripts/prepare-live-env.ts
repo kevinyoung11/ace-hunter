@@ -361,8 +361,9 @@ async function main(): Promise<void> {
 async function recoverFromAdmin(options: { admin: Queryable; adminUrl: string; store: CredentialStore; source: ReturnType<typeof requiredSource>; fingerprintPath: string; runtimeEnvPath: string }): Promise<{ migrationUrl: string; runtimeUrl: string }> {
   const oldMigration = await options.store.get(KEYCHAIN_ACCOUNTS.migration);
   const oldRuntime = await options.store.get(KEYCHAIN_ACCOUNTS.runtime);
-  let changedMigration = false;
-  let changedRuntime = false;
+  const oldRuntimeEnv = await lstat(options.runtimeEnvPath).catch((error: NodeJS.ErrnoException) => error.code === "ENOENT" ? null : Promise.reject(error));
+  if (oldRuntimeEnv && (!oldRuntimeEnv.isFile() || oldRuntimeEnv.isSymbolicLink() || oldRuntimeEnv.uid !== process.getuid?.() || (oldRuntimeEnv.mode & 0o077) !== 0)) throw new Error("runtime_environment_permissions_invalid");
+  const oldRuntimeEnvContents = oldRuntimeEnv ? await readFile(options.runtimeEnvPath) : null;
   let temporary: string | undefined;
   try {
     if (!options.store.setPair || !oldMigration || !oldRuntime) throw new Error("atomic_credential_store_required");
@@ -370,9 +371,7 @@ async function recoverFromAdmin(options: { admin: Queryable; adminUrl: string; s
     const migrationUrl = buildRoleUrl(options.adminUrl, "ace_hunter_migrator", generate());
     const runtimeUrl = buildRoleUrl(options.adminUrl, "ace_hunter_runtime", generate());
     await setFixedRolePassword(options.admin, "ace_hunter_migrator", new URL(migrationUrl).password);
-    changedMigration = true;
     await setFixedRolePassword(options.admin, "ace_hunter_runtime", new URL(runtimeUrl).password);
-    changedRuntime = true;
     await verifyRuntimeCredential(migrationUrl);
     await verifyRuntimeCredential(runtimeUrl);
     const selected = options.source.userId
@@ -390,11 +389,16 @@ async function recoverFromAdmin(options: { admin: Queryable; adminUrl: string; s
   } catch {
     if (temporary) await rm(temporary, { force: true });
     const restore = async () => {
-      if (changedMigration && oldMigration) await setFixedRolePassword(options.admin, "ace_hunter_migrator", new URL(oldMigration).password);
-      if (changedRuntime && oldRuntime) await setFixedRolePassword(options.admin, "ace_hunter_runtime", new URL(oldRuntime).password);
+      if (oldMigration) await setFixedRolePassword(options.admin, "ace_hunter_migrator", new URL(oldMigration).password);
+      if (oldRuntime) await setFixedRolePassword(options.admin, "ace_hunter_runtime", new URL(oldRuntime).password);
       if (oldMigration && oldRuntime && options.store.setPair) await options.store.setPair(oldMigration, oldRuntime);
       if (oldMigration) await verifyRuntimeCredential(oldMigration);
       if (oldRuntime) await verifyRuntimeCredential(oldRuntime);
+      if (oldRuntimeEnvContents) {
+        const restorePath = `${options.runtimeEnvPath}.restore.${process.pid}`;
+        await writeFile(restorePath, oldRuntimeEnvContents, { mode: 0o600, flag: "wx" });
+        await rename(restorePath, options.runtimeEnvPath);
+      } else await rm(options.runtimeEnvPath, { force: true });
     };
     try { await restore(); } catch { throw new Error("modified_requires_manual_recovery"); }
     throw new Error("database_credential_recovery_required");

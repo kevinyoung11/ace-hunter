@@ -169,4 +169,12 @@ describe("prepare-live-env safety helpers", () => {
   it("requires recovery mode to provide candidate role passwords", async () => {
     expect(() => parseSourceDotenv("ACE_HUNTER_ADMIN_DATABASE_URL=postgres://admin:x@db/postgres\n")).not.toThrow();
   });
+
+  it("snapshots persistent runtime.env and unconditionally attempts both role restorations", async () => {
+    const source = await readFile("scripts/prepare-live-env.ts", "utf8");
+    expect(source).toContain("const oldRuntimeEnvContents");
+    expect(source).toContain("new URL(oldMigration).password");
+    expect(source).toContain("new URL(oldRuntime).password");
+    expect(source).toContain("modified_requires_manual_recovery");
+  });
 });
