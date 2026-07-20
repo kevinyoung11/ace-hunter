@@ -81,7 +81,7 @@ acceptance_json="${live_dir}/acceptance-runs.json"
 "$node_path" -e 'const fs=require("node:fs");const rows=fs.readFileSync(process.argv[1],"utf8").trim().split(/\n+/).filter(Boolean).map(JSON.parse);fs.writeFileSync(process.argv[2],JSON.stringify(rows),{mode:0o600,flag:"wx"})' "$records" "$acceptance_json"
 
 launchd_mode="$("$node_path" "$transaction_helper" launchd-mode "$release_transaction")"
-ops/launchd/install.sh "$release" "$launchd_mode"
+ops/launchd/install.sh "$release" "$launchd_mode" "${HOME}/Library/Application Support/AceHunter/runtime.env"
 kickstart_boundary="$(ACE_HUNTER_ENV_FILE="$live_env" "$node_path" --import tsx -e 'import{Pool}from"pg";import{loadRuntimeConfig}from"./src/config/load-config.ts";const p=new Pool({connectionString:loadRuntimeConfig(process.env).runtimeDatabaseUrl});const r=await p.query("select clock_timestamp() now");await p.end();process.stdout.write(r.rows[0].now.toISOString())')"
 lock_dir="${HOME}/Library/Application Support/AceHunter/run/collect-x.lock"
 mkdir -p "$lock_dir"

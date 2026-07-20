@@ -6,27 +6,12 @@ umask 077
 source_env="$1"
 repo_root="$(cd "$(dirname "$0")/.." && pwd -P)"
 cd "$repo_root"
-app_bin="${HOME}/Library/Application Support/AceHunter/bin"
-mkdir -p "$app_bin" && chmod 700 "${HOME}/Library/Application Support/AceHunter" "$app_bin"
-helper="${app_bin}/keychain-secret"
-helper_build_dir="$(mktemp -d "${app_bin}/keychain-build.XXXXXX")"
-trap 'rm -rf "$helper_build_dir"' EXIT
-# The fixed output basename gives this ad-hoc signed helper a stable Keychain
-# identity across local acceptance and launchd installation.
-xcrun swiftc -module-name AceHunterKeychain -framework Security ops/launchd/keychain-secret.swift -o "${helper_build_dir}/keychain-secret"
-chmod 700 "${helper_build_dir}/keychain-secret"
-if [[ -e "$helper" ]]; then
-  [[ -f "$helper" && ! -L "$helper" && "$(stat -f '%u' "$helper")" = "$(id -u)" ]] || { printf 'unsafe_existing_keychain_helper\n' >&2; exit 1; }
-  cmp -s "${helper_build_dir}/keychain-secret" "$helper" || { printf 'keychain_helper_upgrade_requires_migration\n' >&2; exit 1; }
-else
-  mv -f "${helper_build_dir}/keychain-secret" "$helper"
-fi
-rmdir "${helper_build_dir}" 2>/dev/null || { rm -f "${helper_build_dir}/keychain-secret"; rmdir "${helper_build_dir}"; }
-helper_build_dir=""
-trap - EXIT
+app_dir="${HOME}/Library/Application Support/AceHunter"
+mkdir -p "$app_dir" && chmod 700 "$app_dir"
+credential_store="${app_dir}/runtime-credentials.env"
 
 prepare() {
-  node --import tsx scripts/prepare-live-env.ts --mode "$1" --source "$source_env" --keychain-helper "$helper"
+  node --import tsx scripts/prepare-live-env.ts --mode "$1" --source "$source_env" --credential-store "$credential_store"
 }
 set +e
 live_env="$(prepare local 2>/dev/null)"

@@ -72,6 +72,8 @@ it("restores a loaded and enabled prior LaunchAgent exactly and makes rollback i
   await writeFile(join(app, "bin", "ace-hunter"), "prior-wrapper\n", { mode: 0o755 });
   await symlink(join(prior, "skills", "ace-hunter"), join(codex, "skills", "ace-hunter"));
   await writeFile(join(app, "bin", "keychain-secret"), "prior-helper\n", { mode: 0o700 });
+  await writeFile(join(app, "runtime-credentials.env"), "prior-credentials\n", { mode: 0o600 });
+  await writeFile(join(app, "runtime.env"), "prior-runtime\n", { mode: 0o600 });
   await writeFile(join(app, "scheduler.conf"), `RELEASE_ROOT=${prior}\n`, { mode: 0o600 });
   const agent = join(home, "Library", "LaunchAgents", "com.kevinyoung.ace-hunter.collect-x.plist");
   await writeFile(agent, `prior=${prior}\n`, { mode: 0o600 });
@@ -79,7 +81,7 @@ it("restores a loaded and enabled prior LaunchAgent exactly and makes rollback i
   await run("begin", { loaded: "true", disabled: "false" });
   const state = JSON.parse(await readFile(join(tx, "state.json"), "utf8"));
   expect(state).toMatchObject({
-    version: 2,
+      version: 3,
     launchd: { loaded: true, disabledOverride: false },
   });
   expect((await stat(tx)).mode & 0o777).toBe(0o700);
@@ -89,6 +91,8 @@ it("restores a loaded and enabled prior LaunchAgent exactly and makes rollback i
   await symlink(next, join(app, "current"));
   await symlink(join(next, "skills"), join(codex, "skills", "ace-hunter"));
   await writeFile(join(app, "bin", "ace-hunter"), "next-wrapper\n");
+  await writeFile(join(app, "runtime-credentials.env"), "next-credentials\n");
+  await writeFile(join(app, "runtime.env"), "next-runtime\n");
   await writeFile(join(app, "scheduler.conf"), `RELEASE_ROOT=${next}\n`);
   await writeFile(agent, `next=${next}\n`);
 
@@ -96,6 +100,8 @@ it("restores a loaded and enabled prior LaunchAgent exactly and makes rollback i
 
   expect(await readlink(join(app, "current"))).toBe(prior);
   expect(await readFile(join(app, "bin", "ace-hunter"), "utf8")).toBe("prior-wrapper\n");
+  expect(await readFile(join(app, "runtime-credentials.env"), "utf8")).toBe("prior-credentials\n");
+  expect(await readFile(join(app, "runtime.env"), "utf8")).toBe("prior-runtime\n");
   expect(await readlink(join(codex, "skills", "ace-hunter"))).toBe(join(prior, "skills", "ace-hunter"));
   expect(await readFile(join(app, "scheduler.conf"), "utf8")).toBe(`RELEASE_ROOT=${prior}\n`);
   expect(await readFile(agent, "utf8")).toBe(`prior=${prior}\n`);

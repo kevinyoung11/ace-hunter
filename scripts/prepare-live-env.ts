@@ -1,19 +1,23 @@
 import { createHash, randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
 import { constants } from "node:fs";
-import { access, chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, chmod, lstat, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { isAbsolute, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parse } from "dotenv";
 import { Pool } from "pg";
 import { recordAdminCatalog } from "./supabase-safety-check.js";
 
 type Queryable = { query(sql: string, values?: unknown[]): Promise<{ rows: Array<Record<string, unknown>> }> };
-export type Keychain = { get(account: string): Promise<string | null>; set(account: string, value: string): Promise<void>; delete(account: string): Promise<void> };
+export type CredentialStore = { get(account: string): Promise<string | null>; set(account: string, value: string): Promise<void>; delete(account: string): Promise<void> };
 export type LiveMode = "bootstrap" | "local" | "release";
 const ROLE_NAMES = new Set(["ace_hunter_migrator", "ace_hunter_runtime"]);
 const KEYCHAIN_ACCOUNTS = { migration: "migration-database-url", runtime: "runtime-database-url" } as const;
+const STORE_KEYS = {
+  "migration-database-url": "ACE_HUNTER_MIGRATION_DATABASE_URL",
+  "runtime-database-url": "ACE_HUNTER_RUNTIME_DATABASE_URL",
+} as const;
 
 export function parseSourceDotenv(source: string): Record<string, string> {
   for (const raw of source.replace(/\r\n?/g, "\n").split("\n")) {
@@ -99,7 +103,7 @@ end $ace_creator_memberships$`);
 }
 
 export async function fixedRoleCredentials(options: {
-  mode: LiveMode; keychain: Keychain; admin: Queryable; adminUrl: string; randomPassword?: () => string;
+  mode: LiveMode; keychain: CredentialStore; admin: Queryable; adminUrl: string; randomPassword?: () => string;
 }): Promise<{ migrationUrl: string; runtimeUrl: string }> {
   const [migrationExisting, runtimeExisting] = await Promise.all([
     options.keychain.get(KEYCHAIN_ACCOUNTS.migration), options.keychain.get(KEYCHAIN_ACCOUNTS.runtime),
@@ -146,7 +150,7 @@ function validateRoleDsn(value: string, expectedUser: string, adminUrl: string):
   }
 }
 
-export function createKeychainClient(helper: string): Keychain {
+export function createKeychainClient(helper: string): CredentialStore {
   if (!isAbsolute(helper)) throw new Error("absolute_keychain_helper_required");
   return {
     async get(account) {
@@ -165,6 +169,58 @@ export function createKeychainClient(helper: string): Keychain {
     async delete(account) {
       const result = await runHelper(helper, ["delete", account]);
       if (result.code !== 0 && result.stderr.trim() !== "secret_unavailable") throw new Error("keychain_delete_failed");
+    },
+  };
+}
+
+/**
+ * A non-interactive, owner-only store for the two fixed database role DSNs.
+ * It deliberately stores only the database role credentials; the deploy source
+ * remains the source for API credentials and the runtime env is generated
+ * separately.  This prevents a login Keychain state from gating launchd.
+ */
+export function createFileCredentialStore(path: string): CredentialStore {
+  if (!isAbsolute(path)) throw new Error("absolute_credential_store_required");
+  const read = async (): Promise<Record<string, string>> => {
+    const entry = await lstat(path).catch((error: NodeJS.ErrnoException) => error.code === "ENOENT" ? null : Promise.reject(error));
+    if (entry === null) return {};
+    if (!entry.isFile() || entry.isSymbolicLink() || entry.uid !== process.getuid?.() || (entry.mode & 0o077) !== 0) {
+      throw new Error("credential_store_permissions_invalid");
+    }
+    const values = parseSourceDotenv(await readFile(path, "utf8"));
+    for (const key of Object.keys(values)) if (!Object.values(STORE_KEYS).includes(key as never)) throw new Error("credential_store_key_invalid");
+    return values;
+  };
+  const write = async (values: Record<string, string>): Promise<void> => {
+    const directory = dirname(path);
+    const temporary = join(directory, `.${randomBytes(16).toString("hex")}.credentials`);
+    try {
+      await writeFile(temporary, serializeDotenv(values), { mode: 0o600, flag: "wx" });
+      await chmod(temporary, 0o600);
+      await rename(temporary, path);
+    } finally {
+      await rm(temporary, { force: true });
+    }
+  };
+  return {
+    async get(account) {
+      const key = STORE_KEYS[account as keyof typeof STORE_KEYS];
+      if (!key) throw new Error("credential_account_not_allowed");
+      return (await read())[key] ?? null;
+    },
+    async set(account, value) {
+      const key = STORE_KEYS[account as keyof typeof STORE_KEYS];
+      if (!key) throw new Error("credential_account_not_allowed");
+      const values = await read();
+      values[key] = value;
+      await write(values);
+    },
+    async delete(account) {
+      const key = STORE_KEYS[account as keyof typeof STORE_KEYS];
+      if (!key) throw new Error("credential_account_not_allowed");
+      const values = await read();
+      delete values[key];
+      await write(values);
     },
   };
 }
@@ -194,7 +250,6 @@ function requiredSource(source: Record<string, string>): { adminUrl: string; git
 async function main(): Promise<void> {
   const args = parseArguments(process.argv.slice(2));
   await access(args.source, constants.R_OK);
-  await access(args.keychainHelper, constants.X_OK);
   const source = requiredSource(parseSourceDotenv(await readFile(args.source, "utf8")));
   const directory = await mkdtemp(join(tmpdir(), "ace-hunter-live-"));
   await chmod(directory, 0o700);
@@ -214,7 +269,7 @@ async function main(): Promise<void> {
   try {
     await recordAdminCatalog(admin, fingerprintPath);
     await bootstrapFixedRolesAndSchema(admin);
-    const credentials = await fixedRoleCredentials({ mode: args.mode, keychain: createKeychainClient(args.keychainHelper), admin, adminUrl: source.adminUrl });
+    const credentials = await fixedRoleCredentials({ mode: args.mode, keychain: createFileCredentialStore(args.credentialStore), admin, adminUrl: source.adminUrl });
     const selected = source.userId
       ? await admin.query("select id from auth.users where id=$1", [source.userId])
       : await admin.query("select id from auth.users order by created_at,id limit 1");
@@ -244,18 +299,18 @@ async function main(): Promise<void> {
   }
 }
 
-function parseArguments(args: string[]): { mode: LiveMode; source: string; keychainHelper: string } {
-  let mode: LiveMode | undefined, source: string | undefined, keychainHelper: string | undefined;
+function parseArguments(args: string[]): { mode: LiveMode; source: string; credentialStore: string } {
+  let mode: LiveMode | undefined, source: string | undefined, credentialStore: string | undefined;
   for (let index = 0; index < args.length; index += 2) {
     const flag = args[index], value = args[index + 1];
     if (!value) throw new Error("usage_error");
     if (flag === "--mode" && ["bootstrap", "local", "release"].includes(value)) mode = value as LiveMode;
     else if (flag === "--source") source = value;
-    else if (flag === "--keychain-helper") keychainHelper = value;
+    else if (flag === "--credential-store") credentialStore = value;
     else throw new Error("usage_error");
   }
-  if (!mode || !source || !keychainHelper || !isAbsolute(source) || !isAbsolute(keychainHelper)) throw new Error("usage_error");
-  return { mode, source, keychainHelper };
+  if (!mode || !source || !credentialStore || !isAbsolute(source) || !isAbsolute(credentialStore)) throw new Error("usage_error");
+  return { mode, source, credentialStore };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) await main();

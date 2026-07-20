@@ -38,10 +38,12 @@ async function begin() {
     wrapper: join(appDir, "bin", "ace-hunter"),
     skill: join(codexHome, "skills", "ace-hunter"),
     helper: join(appDir, "bin", "keychain-secret"),
+    credentials: join(appDir, "runtime-credentials.env"),
+    runtimeEnv: join(appDir, "runtime.env"),
     config: join(appDir, "scheduler.conf"),
     agent: join(home, "Library", "LaunchAgents", agentName),
   };
-  const kinds = { current: "link", wrapper: "file", skill: "link", helper: "file", config: "file", agent: "file" };
+  const kinds = { current: "link", wrapper: "file", skill: "link", helper: "file", credentials: "file", runtimeEnv: "file", config: "file", agent: "file" };
   const artifacts = {};
   for (const [name, path] of Object.entries(paths)) {
     artifacts[name] = await snapshot(name, path, kinds[name]);
@@ -50,7 +52,7 @@ async function begin() {
   if (launchd.loaded && artifacts.agent.state !== "file") {
     throw new Error("release_transaction_launchd_state_unrestorable");
   }
-  await writeState({ version: 2, status: "active", uid: process.getuid?.(), paths, artifacts, launchd });
+  await writeState({ version: 3, status: "active", uid: process.getuid?.(), paths, artifacts, launchd });
 }
 
 function probeLaunchd(domain) {
@@ -92,10 +94,10 @@ async function rollback() {
   const domain = `gui/${process.getuid?.()}`;
   spawnSync("launchctl", ["bootout", domain, state.paths.agent], { stdio: "ignore" });
   assertLaunchdLoaded(domain, false);
-  for (const name of ["current", "wrapper", "skill", "helper", "config", "agent"]) {
+  for (const name of ["current", "wrapper", "skill", "helper", "credentials", "runtimeEnv", "config", "agent"]) {
     await rm(state.paths[name], { recursive: false, force: true });
   }
-  for (const name of ["current", "wrapper", "skill", "helper", "config", "agent"]) {
+  for (const name of ["current", "wrapper", "skill", "helper", "credentials", "runtimeEnv", "config", "agent"]) {
     const artifact = state.artifacts[name];
     if (artifact.state === "link") await restoreLink(state.paths[name], artifact.target);
     if (artifact.state === "file") await restoreFile(state.paths[name], artifact.backup, artifact.mode);
@@ -149,7 +151,7 @@ async function loadState(expectedStatus) {
   const state = JSON.parse(await readFile(statePath, "utf8"));
   const validDisabledOverride = state.launchd?.disabledOverride === null ||
     typeof state.launchd?.disabledOverride === "boolean";
-  if (state.version !== 2 || state.uid !== process.getuid?.() || typeof state.paths !== "object" ||
+  if (state.version !== 3 || state.uid !== process.getuid?.() || typeof state.paths !== "object" ||
       typeof state.artifacts !== "object" || typeof state.status !== "string" ||
       typeof state.launchd?.loaded !== "boolean" || !validDisabledOverride) throw new Error("release_transaction_invalid");
   if (expectedStatus !== undefined && state.status !== expectedStatus) throw new Error("release_transaction_not_active");
