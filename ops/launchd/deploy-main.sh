@@ -11,6 +11,14 @@ script_dir="$(cd "$(dirname "$0")" && pwd -P)"
 repo_root="$(cd "${script_dir}/../.." && pwd -P)"
 transaction_helper="${repo_root}/scripts/release-transaction.mjs"
 integrity_helper="${repo_root}/scripts/release-integrity.mjs"
+candidate_tmp=""
+candidate_tmp_created=0
+cleanup_trusted() {
+  if [[ "${candidate_tmp_created:-0}" = 1 && -e "$candidate_tmp" ]]; then
+    rm -rf -- "$candidate_tmp"
+  fi
+  return 0
+}
 git fetch --quiet origin main
 remote_main="$(git rev-parse origin/main)"
 [[ "$main_sha" = "$remote_main" ]] || { printf 'sha_not_remote_main\n' >&2; exit 1; }
@@ -37,15 +45,15 @@ case "$candidate" in *'.config/superpowers/worktrees'*) printf 'worktree_release
 mkdir -p "$releases_dir" "${app_dir}/bin"
 chmod 700 "$app_dir" "$releases_dir" "${app_dir}/bin"
 candidate_tmp="${releases_dir}/.trusted-${main_sha}.$$"
-cleanup_trusted() {
-  if [[ "${candidate_tmp_created:-0}" = 1 && -e "$candidate_tmp" ]]; then
-    rm -rf -- "$candidate_tmp"
-  fi
-  return 0
-}
 trap cleanup_trusted EXIT
+trap '' HUP INT TERM
+trap - ERR
 mkdir "$candidate_tmp"
 candidate_tmp_created=1
+trap 'rollback_exit $?' ERR
+trap 'rollback_exit 129' HUP
+trap 'rollback_exit 130' INT
+trap 'rollback_exit 143' TERM
 git archive "$main_sha" | tar -x -C "$candidate_tmp"
 node_bin_dir="$(dirname "$node_path")"
 npm_cli="$(realpath "${node_bin_dir}/npm" 2>/dev/null)" || { printf 'node22_npm_not_found\n' >&2; exit 1; }

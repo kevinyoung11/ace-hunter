@@ -64,6 +64,13 @@ esac
 });
 afterEach(async () => { await rm(root, { recursive: true, force: true }); });
 
+it("rejects extra or missing action arguments", async () => {
+  await expect(execFile("node", ["scripts/release-transaction.mjs", "verify", tx, "extra"], { cwd: process.cwd() }))
+    .rejects.toMatchObject({ stderr: expect.stringContaining("release_transaction_usage_error") });
+  await expect(execFile("node", ["scripts/release-transaction.mjs", "begin", tx, app], { cwd: process.cwd() }))
+    .rejects.toMatchObject({ stderr: expect.stringContaining("release_transaction_usage_error") });
+});
+
 it("restores a loaded and enabled prior LaunchAgent exactly and makes rollback idempotent", async () => {
   const prior = join(app, "releases", "prior");
   const next = join(app, "releases", "next");

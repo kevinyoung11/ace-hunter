@@ -5,12 +5,14 @@ import {
 import { dirname, isAbsolute, join } from "node:path";
 import process from "node:process";
 
-const [action, transaction, appDir, codexHome] = process.argv.slice(2);
+const args = process.argv.slice(2);
+const [action, transaction, appDir, codexHome] = args;
 const agentName = "com.kevinyoung.ace-hunter.collect-x.plist";
 const agentLabel = agentName.replace(/\.plist$/u, "");
 
 try {
-  if (!isAbsolute(transaction ?? "") || !["begin", "verify", "rollback", "commit", "launchd-mode", "mark-external-db-modified"].includes(action)) {
+  const expectedArgCount = action === "begin" ? 4 : ["verify", "rollback", "commit", "launchd-mode", "mark-external-db-modified"].includes(action) ? 2 : -1;
+  if (args.length !== expectedArgCount || !isAbsolute(transaction ?? "") || !["begin", "verify", "rollback", "commit", "launchd-mode", "mark-external-db-modified"].includes(action)) {
     throw new Error("release_transaction_usage_error");
   }
   if (action === "begin") await begin();
