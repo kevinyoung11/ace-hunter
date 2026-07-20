@@ -9,6 +9,8 @@ config_file="${app_dir}/scheduler.conf"
 lock_dir="${app_dir}/run/collect-x.lock"
 
 fail() { printf '%s\n' "$1" >&2; exit 1; }
+file_owner() { stat -f '%u' "$1" 2>/dev/null || stat -c '%u' "$1"; }
+file_mode() { stat -f '%Lp' "$1" 2>/dev/null || stat -c '%a' "$1"; }
 [[ -f "$config_file" && ! -L "$config_file" ]] || fail configuration_error
 # shellcheck disable=SC1090
 source "$config_file"
@@ -16,7 +18,7 @@ for name in NODE_PATH TWITTER_CLI_PATH RUNTIME_ENV_FILE RELEASE_ROOT; do
   [[ -n "${!name:-}" && "${!name}" = /* ]] || fail configuration_error
 done
 NODE_PATH="$("${RELEASE_ROOT}/scripts/resolve-node22.sh" --fallback "$NODE_PATH")"
-[[ -f "$RUNTIME_ENV_FILE" && ! -L "$RUNTIME_ENV_FILE" && "$(stat -f '%u' "$RUNTIME_ENV_FILE")" = "$(id -u)" && "$(stat -f '%Lp' "$RUNTIME_ENV_FILE")" = 600 ]] || fail runtime_environment_error
+[[ -f "$RUNTIME_ENV_FILE" && ! -L "$RUNTIME_ENV_FILE" && "$(file_owner "$RUNTIME_ENV_FILE")" = "$(id -u)" && "$(file_mode "$RUNTIME_ENV_FILE")" = 600 ]] || fail runtime_environment_error
 for name in HTTP_PROXY HTTPS_PROXY NO_PROXY ALL_PROXY http_proxy https_proxy no_proxy all_proxy SSL_CERT_FILE SSL_CERT_DIR; do
   [[ -n "${!name:-}" ]] && export "$name"
 done
