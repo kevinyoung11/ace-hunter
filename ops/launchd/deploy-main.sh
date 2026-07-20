@@ -13,6 +13,7 @@ transaction_helper="${repo_root}/scripts/release-transaction.mjs"
 integrity_helper="${repo_root}/scripts/release-integrity.mjs"
 candidate_tmp=""
 candidate_tmp_created=0
+rollback_in_progress=0
 cleanup_trusted() {
   if [[ "${candidate_tmp_created:-0}" = 1 && -e "$candidate_tmp" ]]; then
     rm -rf -- "$candidate_tmp"
@@ -22,15 +23,30 @@ cleanup_trusted() {
 node_path="$("${repo_root}/scripts/resolve-node22.sh")"
 rollback_exit() {
   local status="$1"
+  rollback_in_progress=1
+  trap - EXIT
   trap - ERR HUP INT TERM
   cleanup_trusted
   "$node_path" "$transaction_helper" rollback "$transaction" >/dev/null || status=1
   exit "$status"
 }
+rollback_on_exit() {
+  local status="$?"
+  if [[ "$status" -ne 0 && "$rollback_in_progress" -eq 0 ]]; then
+    rollback_in_progress=1
+    trap - EXIT ERR HUP INT TERM
+    cleanup_trusted
+    "$node_path" "$transaction_helper" rollback "$transaction" >/dev/null || status=1
+  else
+    cleanup_trusted
+  fi
+  return "$status"
+}
 trap 'rollback_exit $?' ERR
 trap 'rollback_exit 129' HUP
 trap 'rollback_exit 130' INT
 trap 'rollback_exit 143' TERM
+trap rollback_on_exit EXIT
 
 "$node_path" "$transaction_helper" verify "$transaction" >/dev/null
 
@@ -46,7 +62,6 @@ case "$candidate" in *'.config/superpowers/worktrees'*) printf 'worktree_release
 mkdir -p "$releases_dir" "${app_dir}/bin"
 chmod 700 "$app_dir" "$releases_dir" "${app_dir}/bin"
 candidate_tmp="${releases_dir}/.trusted-${main_sha}.$$"
-trap cleanup_trusted EXIT
 trap '' HUP INT TERM
 mkdir "$candidate_tmp" || {
   mkdir_status=$?
