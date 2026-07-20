@@ -37,7 +37,8 @@ mkdir -p "$releases_dir" "${app_dir}/bin"
 chmod 700 "$app_dir" "$releases_dir" "${app_dir}/bin"
 if [[ -e "$candidate" || -L "$candidate" ]]; then
   [[ -d "$candidate" && ! -L "$candidate" ]] || { printf 'release_path_invalid\n' >&2; exit 1; }
-  "$node_path" "$integrity_helper" verify "$candidate" "$main_sha" >/dev/null
+  trusted_digest="$("$node_path" "$integrity_helper" digest "$candidate")"
+  "$node_path" "$integrity_helper" verify "$candidate" "$main_sha" "$trusted_digest" >/dev/null
 else
   node_bin_dir="$(dirname "$node_path")"
   npm_cli="$(realpath "${node_bin_dir}/npm" 2>/dev/null)" || { printf 'node22_npm_not_found\n' >&2; exit 1; }
@@ -50,10 +51,12 @@ else
     PATH="${node_bin_dir}:$PATH" "$node_path" "$npm_cli" run build &&
     PATH="${node_bin_dir}:$PATH" "$node_path" "$npm_cli" run skill:validate)
   "$node_path" "$integrity_helper" seal "$candidate_tmp" "$main_sha" >/dev/null
-  "$node_path" "$integrity_helper" verify "$candidate_tmp" "$main_sha" >/dev/null
+  trusted_digest="$("$node_path" "$integrity_helper" digest "$candidate_tmp")"
+  "$node_path" "$integrity_helper" verify "$candidate_tmp" "$main_sha" "$trusted_digest" >/dev/null
   mv "$candidate_tmp" "$candidate"
 fi
-"$node_path" "$integrity_helper" verify "$candidate" "$main_sha" >/dev/null
+trusted_digest="${trusted_digest:-$("$node_path" "$integrity_helper" digest "$candidate")}"
+"$node_path" "$integrity_helper" verify "$candidate" "$main_sha" "$trusted_digest" >/dev/null
 ACE_HUNTER_ENV_FILE="$live_env" "$node_path" "${candidate}/dist/src/cli/index.js" list >/dev/null
 "$node_path" "${candidate}/scripts/validate-skill.mjs" "${candidate}/skills/ace-hunter" >/dev/null
 

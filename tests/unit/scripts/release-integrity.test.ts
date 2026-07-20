@@ -18,7 +18,8 @@ it("seals and re-verifies immutable release content including safe internal syml
   await writeFile(join(release, "bin", "entry.js"), "export {};\n");
   await symlink("entry.js", join(release, "bin", "entry-link.js"));
   await run("seal", release, sha);
-  await expect(run("verify", release, sha)).resolves.toMatchObject({ stdout: "release_integrity_verified\n" });
+  const trusted = (await runDigest(release)).stdout.trim();
+  await expect(run("verify", release, sha, trusted)).resolves.toMatchObject({ stdout: "release_integrity_verified\n" });
 });
 
 it("rejects reused release content changed after sealing", async () => {
@@ -26,9 +27,10 @@ it("rejects reused release content changed after sealing", async () => {
   await mkdir(release);
   await writeFile(join(release, "app.js"), "original\n");
   await run("seal", release, sha);
+  const trusted = (await runDigest(release)).stdout.trim();
   await writeFile(join(release, "app.js"), "tampered\n");
-  await expect(run("verify", release, sha)).rejects.toMatchObject({
-    stderr: expect.stringContaining("release_integrity_mismatch"),
+  await expect(run("verify", release, sha, trusted)).rejects.toMatchObject({
+    stderr: expect.stringContaining("release_trusted_digest_mismatch"),
   });
 });
 
@@ -47,6 +49,10 @@ it("rejects a release root symlink and an escaping content symlink", async () =>
   });
 });
 
-function run(action: "seal" | "verify", release: string, expectedSha: string) {
-  return execFile("node", ["scripts/release-integrity.mjs", action, release, expectedSha], { cwd: process.cwd() });
+function run(action: "seal" | "verify", release: string, expectedSha: string, trusted?: string) {
+  return execFile("node", ["scripts/release-integrity.mjs", action, release, expectedSha, ...(trusted ? [trusted] : [])], { cwd: process.cwd() });
+}
+
+function runDigest(release: string) {
+  return execFile("node", ["scripts/release-integrity.mjs", "digest", release], { cwd: process.cwd() });
 }
