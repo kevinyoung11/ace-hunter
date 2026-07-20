@@ -26,3 +26,17 @@ export function loadWebConfig(env: Record<string, string | undefined>): WebConfi
     supabasePublishableKey: parsed.data.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY,
   });
 }
+
+/**
+ * Read each key explicitly so Next can include the required values in the
+ * server and proxy bundles. Passing the entire process.env object prevents
+ * Edge/Proxy builds from retaining non-public environment variables.
+ */
+export function readWebConfig(): WebConfig {
+  return loadWebConfig({
+    ACE_HUNTER_RUNTIME_DATABASE_URL: process.env.ACE_HUNTER_RUNTIME_DATABASE_URL,
+    ACE_HUNTER_USER_ID: process.env.ACE_HUNTER_USER_ID,
+    NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL,
+    NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY,
+  });
+}
