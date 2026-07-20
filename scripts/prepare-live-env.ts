@@ -389,16 +389,19 @@ async function recoverFromAdmin(options: { admin: Queryable; adminUrl: string; s
   } catch {
     if (temporary) await rm(temporary, { force: true });
     const restore = async () => {
-      if (oldMigration) await setFixedRolePassword(options.admin, "ace_hunter_migrator", new URL(oldMigration).password);
-      if (oldRuntime) await setFixedRolePassword(options.admin, "ace_hunter_runtime", new URL(oldRuntime).password);
-      if (oldMigration && oldRuntime && options.store.setPair) await options.store.setPair(oldMigration, oldRuntime);
-      if (oldMigration) await verifyRuntimeCredential(oldMigration);
-      if (oldRuntime) await verifyRuntimeCredential(oldRuntime);
+      const compensationFailures: unknown[] = [];
+      const attempt = async (operation: () => Promise<void>) => { try { await operation(); } catch (error) { compensationFailures.push(error); } };
+      const setPair = options.store.setPair;
+      if (oldMigration) await attempt(() => setFixedRolePassword(options.admin, "ace_hunter_migrator", new URL(oldMigration).password));
+      if (oldRuntime) await attempt(() => setFixedRolePassword(options.admin, "ace_hunter_runtime", new URL(oldRuntime).password));
+      if (oldMigration && oldRuntime && setPair) await attempt(() => setPair(oldMigration, oldRuntime));
+      if (oldMigration) await attempt(() => verifyRuntimeCredential(oldMigration));
+      if (oldRuntime) await attempt(() => verifyRuntimeCredential(oldRuntime));
       if (oldRuntimeEnvContents) {
         const restorePath = `${options.runtimeEnvPath}.restore.${process.pid}`;
-        await writeFile(restorePath, oldRuntimeEnvContents, { mode: 0o600, flag: "wx" });
-        await rename(restorePath, options.runtimeEnvPath);
-      } else await rm(options.runtimeEnvPath, { force: true });
+        await attempt(async () => { await writeFile(restorePath, oldRuntimeEnvContents, { mode: 0o600, flag: "wx" }); await rename(restorePath, options.runtimeEnvPath); });
+      } else await attempt(() => rm(options.runtimeEnvPath, { force: true }));
+      if (compensationFailures.length > 0) throw new Error("modified_requires_manual_recovery");
     };
     try { await restore(); } catch { throw new Error("modified_requires_manual_recovery"); }
     throw new Error("database_credential_recovery_required");

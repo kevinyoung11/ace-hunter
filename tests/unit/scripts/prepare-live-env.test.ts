@@ -177,4 +177,12 @@ describe("prepare-live-env safety helpers", () => {
     expect(source).toContain("new URL(oldRuntime).password");
     expect(source).toContain("modified_requires_manual_recovery");
   });
+
+  it("does not short-circuit compensation when the first old-role restore fails", async () => {
+    const source = await readFile("scripts/prepare-live-env.ts", "utf8");
+    expect(source).toContain("const compensationFailures: unknown[] = []");
+    expect(source).toContain("compensationFailures.push(error)");
+    expect(source).toContain("setPair(oldMigration, oldRuntime)");
+    expect(source).toContain("await rename(restorePath, options.runtimeEnvPath)");
+  });
 });
