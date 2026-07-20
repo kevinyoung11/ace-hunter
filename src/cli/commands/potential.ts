@@ -15,13 +15,13 @@ export function registerPotentialCommand(program: Command, dependencies: CliDepe
     .option("--limit <limit>", "1-1000 or all", "20")
     .option("--format <format>", "markdown or json", "markdown")
     .action(async (options: { rule: string; limit: string; format: string }) => {
-      const rule = exactChoice(options.rule, rules);
-      const limit = signalLimit(options.limit);
-      const format = outputFormat(options.format);
       await executeCommand(
         dependencies.io,
-        () => dependencies.potential({ rule, limit }),
-        format,
+        () => dependencies.potential({
+          rule: exactChoice(options.rule, rules),
+          limit: signalLimit(options.limit),
+        }),
+        () => outputFormat(options.format),
       );
     });
 }

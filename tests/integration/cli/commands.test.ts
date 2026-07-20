@@ -101,9 +101,9 @@ it.each([
   ["invalid trending format", ["trending", "daily", "--format", "yaml"]],
 ])("rejects %s before invoking a signal dependency", async (_name, args) => {
   const value = harness();
-  await expect(value.program.parseAsync(["node", "ace-hunter", ...args])).rejects.toMatchObject({
-    code: "validation_error",
-  });
+  await value.program.parseAsync(["node", "ace-hunter", ...args]);
+  expect(value.exits).toEqual([1]);
+  expect(value.stderr).toEqual(["validation_error\n"]);
   expect(value.dependencies.potential).not.toHaveBeenCalled();
   expect(value.dependencies.trending).not.toHaveBeenCalled();
 });
