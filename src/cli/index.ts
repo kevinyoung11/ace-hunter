@@ -14,6 +14,7 @@ import { registerObserveCommand } from "./commands/observe.js";
 import { registerPotentialCommand } from "./commands/potential.js";
 import { registerTodayCommand } from "./commands/today.js";
 import { registerTrendingCommand } from "./commands/trending.js";
+import { registerWorkerCommand } from "./commands/worker.js";
 import { processIo, type CliIo, type CommandOutput } from "./output.js";
 import { createLazyProductionCliRuntime } from "./runtime-dependencies.js";
 
@@ -29,6 +30,7 @@ export interface CliDependencies {
   listMonitors(): Promise<CommandOutput>;
   unfollow(target: string): Promise<CommandOutput>;
   runJob(input: JobInput): Promise<CommandOutput>;
+  worker?(options: { workerId: string; once: boolean; pollSeconds: number }): Promise<CommandOutput>;
   io: CliIo;
   now?: () => Date;
 }
@@ -48,6 +50,7 @@ export function createProgram(dependencies: CliDependencies): Command {
   registerFollowCommands(program, dependencies);
   registerMonitorsCommand(program, dependencies);
   registerJobCommand(program, dependencies);
+  registerWorkerCommand(program, dependencies);
   return program;
 }
 
@@ -68,6 +71,7 @@ export function unavailableDependencies(io: CliIo = processIo): CliDependencies 
     listMonitors: unavailable,
     unfollow: unavailable,
     runJob: unavailable,
+    worker: unavailable,
     io,
   };
 }

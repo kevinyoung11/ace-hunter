@@ -15,6 +15,7 @@ case "$release_root" in
   *) printf 'invalid_release_root\n' >&2; exit 1 ;;
 esac
 [[ -x "${release_root}/scripts/run-scheduled-x.sh" ]] || { printf 'release_incomplete\n' >&2; exit 1; }
+[[ -x "${release_root}/scripts/run-local-worker.sh" ]] || { printf 'release_incomplete\n' >&2; exit 1; }
 runtime_env="${3:-${HOME}/Library/Application Support/AceHunter/runtime.env}"
 file_owner() { [[ "$(uname -s)" = Darwin ]] && stat -f '%u' "$1" || stat -c '%u' "$1"; }
 file_mode() { [[ "$(uname -s)" = Darwin ]] && stat -f '%Lp' "$1" || stat -c '%a' "$1"; }
@@ -85,7 +86,7 @@ chmod 600 "$config_tmp"
 mv -f "$config_tmp" "${app_dir}/scheduler.conf"
 
 cp "${release_root}/ops/launchd/com.kevinyoung.ace-hunter.collect-x.plist" "${agent}.tmp"
-/usr/libexec/PlistBuddy -c "Set :ProgramArguments:0 ${release_root}/scripts/run-scheduled-x.sh" "${agent}.tmp"
+/usr/libexec/PlistBuddy -c "Set :ProgramArguments:0 ${release_root}/scripts/run-local-worker.sh" "${agent}.tmp"
 /usr/libexec/PlistBuddy -c "Set :StandardOutPath ${log_dir}/collect-x.log" "${agent}.tmp"
 /usr/libexec/PlistBuddy -c "Set :StandardErrorPath ${log_dir}/collect-x.error.log" "${agent}.tmp"
 plutil -lint "${agent}.tmp" >/dev/null

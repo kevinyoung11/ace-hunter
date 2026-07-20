@@ -22,6 +22,15 @@ describe("launchd X wrapper", () => {
     expect(plist).not.toMatch(/github[_-]?token|database[_-]?url|deepseek[_-]?api[_-]?key/i);
   });
 
+  it("stages the durable local worker wrapper without removing the legacy scheduler", async () => {
+    const install = await readFile("ops/launchd/install.sh", "utf8");
+    const worker = await readFile("scripts/run-local-worker.sh", "utf8");
+    expect(install).toContain("run-local-worker.sh");
+    expect(install).toContain("run-scheduled-x.sh");
+    expect(worker).toContain("x-worker.lock");
+    expect(worker).toContain("ACE_HUNTER_WORKER_ID");
+  });
+
   it.each([
     ["malformed PID", "bad\n/path\n"],
     ["reboot-stale PID", `999999\n${wrapper}\n`],

@@ -42,6 +42,10 @@ import { GitHubTrendingSource } from "../sources/trending/github-trending-source
 import type { CliDependencies } from "./index.js";
 import { createJobDispatcher } from "./job-dispatcher.js";
 import { processIo, type CliIo, type CommandOutput } from "./output.js";
+import { CommandService } from "../ops/command-service.js";
+import { JobCommandStore } from "../db/stores/job-command-store.js";
+import { WorkerHeartbeatStore } from "../db/stores/worker-heartbeat-store.js";
+import { MacXWorker } from "../worker/mac-x-worker.js";
 
 export interface DatabaseCliOptions {
   pool: Pool;
@@ -51,6 +55,7 @@ export interface DatabaseCliOptions {
   createProductFromGithub?: (fullName: string) => Promise<{ productId: string }>;
   observeResolved?: (productId: string) => Promise<CommandOutput>;
   runJob?: (input: JobInput) => Promise<CommandOutput>;
+  worker?: (options: { workerId: string; once: boolean; pollSeconds: number }) => Promise<CommandOutput>;
 }
 
 export interface ReadonlySignalCliOptions {
@@ -85,6 +90,7 @@ export function createLazyProductionCliRuntime(
       listMonitors: async () => (await getFull()).dependencies.listMonitors(),
       unfollow: async (target) => (await getFull()).dependencies.unfollow(target),
       runJob: async (input) => (await getFull()).dependencies.runJob(input),
+      worker: async (options) => (await getFull()).dependencies.worker?.(options) ?? { kind: "worker_unavailable" },
     },
     close: async () => {
       const runtimes = [fullRuntime, readonlyRuntime].filter(
@@ -128,6 +134,7 @@ async function createReadonlyProductionCliRuntime(
       listMonitors: unavailable,
       unfollow: unavailable,
       runJob: unavailable,
+      worker: unavailable,
     },
     close: async () => pool.end(),
   };
@@ -162,11 +169,27 @@ async function createProductionCliRuntime(
     analyzer: scheduledAnalyzer,
     cleanupX: scheduledX.cleanup,
   });
+  const commandService = new CommandService(
+    new JobCommandStore(pool),
+    undefined,
+    new WorkerHeartbeatStore(pool),
+  );
+  const worker = async (options: { workerId: string; once: boolean; pollSeconds: number }): Promise<CommandOutput> => {
+    const instance = new MacXWorker({
+      service: commandService,
+      dispatcher: runJob,
+      workerId: options.workerId,
+      version: process.env.ACE_HUNTER_RELEASE_SHA ?? "unknown",
+    });
+    await instance.run({ once: options.once, pollSeconds: options.pollSeconds });
+    return { kind: "worker_complete", workerId: options.workerId, once: options.once };
+  };
   const dependencies = createDatabaseCliDependencies({
     pool,
     userId: config.userId,
     io,
     runJob,
+    worker,
     createProductFromGithub: async (fullName) => {
       const operation = await github.openOperation();
       try {
@@ -345,6 +368,7 @@ export function createDatabaseCliDependencies(options: DatabaseCliOptions): CliD
     listMonitors: async () => listMonitors(options.pool, options.userId),
     unfollow: async (target) => monitorResolved(options, await resolve(target), false, now()),
     runJob: options.runJob ?? (async () => { throw codedError("configuration_error"); }),
+    worker: options.worker,
   };
 }
 
