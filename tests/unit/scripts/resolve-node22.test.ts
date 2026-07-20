@@ -1,4 +1,4 @@
-import { chmod, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFile as execFileCallback } from "node:child_process";
@@ -32,8 +32,32 @@ it("selects Node 22 even when an earlier candidate is Node 25", async () => {
     },
   });
 
-  expect(result.stdout.trim()).toBe(await realpath(node22));
+  expect(result.stdout.trim()).toBe(node22);
   expect(result.stderr).toBe("");
+});
+
+it("preserves a stable symlink instead of persisting its versioned target", async () => {
+  const versionedNode = await fakeNode("v22.17.0");
+  const stableNode = join(versionedNode, "..", "node@22");
+  await symlink(versionedNode, stableNode);
+
+  const result = await execFile("bash", ["scripts/resolve-node22.sh", stableNode]);
+
+  expect(result.stdout.trim()).toBe(stableNode);
+});
+
+it("falls back from a removed persisted runtime to the current Node 22", async () => {
+  const staleNode = join(tmpdir(), `removed-node-22-${process.pid}`);
+  const node22 = await fakeNode("v22.18.0");
+
+  const result = await execFile("bash", ["scripts/resolve-node22.sh", "--fallback", staleNode], {
+    env: {
+      ...process.env,
+      PATH: `${join(node22, "..")}:/usr/bin:/bin`,
+    },
+  });
+
+  expect(result.stdout.trim()).toBe(node22);
 });
 
 it("fails explicitly when no candidate is Node 22", async () => {

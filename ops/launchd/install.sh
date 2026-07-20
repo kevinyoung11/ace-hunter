@@ -14,16 +14,17 @@ esac
 [[ -x "${release_root}/scripts/run-scheduled-x.sh" ]] || { printf 'release_incomplete\n' >&2; exit 1; }
 
 verify_binary() {
-  local candidate owner mode
-  candidate="$(realpath "$1")"
-  [[ -f "$candidate" && -x "$candidate" && ! -L "$candidate" ]] || return 1
-  owner="$(stat -f '%u' "$candidate")"
-  mode="$(stat -f '%Lp' "$candidate")"
+  local resolved owner mode
+  resolved="$(realpath "$1")"
+  [[ -f "$resolved" && -x "$resolved" && ! -L "$resolved" ]] || return 1
+  owner="$(stat -f '%u' "$resolved")"
+  mode="$(stat -f '%Lp' "$resolved")"
   [[ "$owner" = 0 || "$owner" = "$(id -u)" ]] || return 1
   (( (8#$mode & 8#022) == 0 )) || return 1
-  printf '%s' "$candidate"
+  printf '%s' "$resolved"
 }
-node_path="$(verify_binary "$("${release_root}/scripts/resolve-node22.sh")")" || { printf 'unsafe_node_binary\n' >&2; exit 1; }
+node_persistent_path="$("${release_root}/scripts/resolve-node22.sh")"
+node_path="$(verify_binary "$node_persistent_path")" || { printf 'unsafe_node_binary\n' >&2; exit 1; }
 twitter_path="$(verify_binary "$(command -v twitter)")" || { printf 'unsafe_twitter_binary\n' >&2; exit 1; }
 "$node_path" --version >/dev/null
 "$node_path" "${release_root}/dist/scripts/assert-twitter-preflight.js" --twitter-cli-path "$twitter_path" >/dev/null
@@ -77,7 +78,7 @@ config_tmp="${app_dir}/.scheduler.conf.$$"
 quoted() { printf '%q' "$1"; }
 proxy_names=(HTTP_PROXY HTTPS_PROXY NO_PROXY ALL_PROXY http_proxy https_proxy no_proxy all_proxy SSL_CERT_FILE SSL_CERT_DIR)
 {
-  printf 'NODE_PATH=%s\n' "$(quoted "$node_path")"
+  printf 'NODE_PATH=%s\n' "$(quoted "$node_persistent_path")"
   printf 'TWITTER_CLI_PATH=%s\n' "$(quoted "$twitter_path")"
   printf 'KEYCHAIN_HELPER=%s\n' "$(quoted "${bin_dir}/keychain-secret")"
   printf 'RELEASE_ROOT=%s\n' "$(quoted "$release_root")"

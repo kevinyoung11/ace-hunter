@@ -170,6 +170,13 @@ it("persists only the network proxy whitelist in the owner-only scheduler config
   expect(installer).not.toMatch(/\b(?:env|printenv)\b[^\n]*scheduler\.conf/u);
 });
 
+it("persists the stable selected Node path after verifying its resolved binary", async () => {
+  const installer = await readFile("ops/launchd/install.sh", "utf8");
+  expect(installer).toContain('node_persistent_path="$("${release_root}/scripts/resolve-node22.sh")"');
+  expect(installer).toContain('node_path="$(verify_binary "$node_persistent_path")"');
+  expect(installer).toContain('printf \'NODE_PATH=%s\\n\' "$(quoted "$node_persistent_path")"');
+});
+
 describe("portable Skill validator", () => {
   it("validates the checked-in Skill without Python dependencies", async () => {
     await expect(execFileAsync(process.execPath, [

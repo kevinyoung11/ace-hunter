@@ -1,8 +1,13 @@
 #!/bin/bash
 set -euo pipefail
 
+fallback=false
+if [[ "${1:-}" = --fallback ]]; then
+  fallback=true
+  shift
+fi
 candidates=("$@")
-if [[ "${#candidates[@]}" -eq 0 ]]; then
+if [[ "${#candidates[@]}" -eq 0 || "$fallback" = true ]]; then
   while IFS= read -r candidate; do
     [[ -n "$candidate" ]] && candidates+=("$candidate")
   done < <(type -a -p node 2>/dev/null || true)
@@ -17,7 +22,15 @@ for candidate in "${candidates[@]}"; do
   resolved="$(realpath "$candidate" 2>/dev/null)" || continue
   version="$("$resolved" --version 2>/dev/null)" || continue
   if [[ "$version" =~ ^v?22\.[0-9]+\.[0-9]+$ ]]; then
-    printf '%s\n' "$resolved"
+    selected="$candidate"
+    for stable in /opt/homebrew/opt/node@22/bin/node /usr/local/opt/node@22/bin/node; do
+      if [[ "$resolved" == */Cellar/node@22/*/bin/node && -e "$stable" ]] &&
+        [[ "$(realpath "$stable" 2>/dev/null || true)" = "$resolved" ]]; then
+        selected="$stable"
+        break
+      fi
+    done
+    printf '%s\n' "$selected"
     exit 0
   fi
 done
