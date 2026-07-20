@@ -82,6 +82,25 @@ describe("TrendingBoard", () => {
     expect(await screen.findByText("趋势榜暂时无法加载，请稍后重试。")).not.toBeNull();
   });
 
+  it("retries the selected period after an error", async () => {
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new Error("offline"))
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ items: [{ id: "retry-skill", name: "Retry Skill" }] }),
+      });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<TrendingBoard initialItems={[]} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "本周" }));
+    expect(await screen.findByText("趋势榜暂时无法加载，请稍后重试。")).not.toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "本周" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText("Retry Skill")).not.toBeNull();
+  });
+
   it("renders the factual repository fields returned by the trending API", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
       ok: true,

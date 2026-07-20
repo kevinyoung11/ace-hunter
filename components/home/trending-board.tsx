@@ -27,7 +27,7 @@ export function TrendingBoard({ initialItems }: TrendingBoardProps) {
   const [state, setState] = useState<"ready" | "loading" | "error">("ready");
 
   async function selectPeriod(nextPeriod: TrendingPeriod) {
-    if (nextPeriod === period || state === "loading") return;
+    if (state === "loading" || (nextPeriod === period && state !== "error")) return;
 
     setPeriod(nextPeriod);
     setState("loading");
