@@ -5,6 +5,7 @@ import { promisify } from "node:util";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { Pool } from "pg";
 import { migrate, migrateWithRestrictedAdmin } from "../../../src/db/migrate.js";
+import { migrations } from "../../../src/db/migration-manifest.js";
 import {
   assertCatalogIsAbsentOrComplete,
   assertRuntimeActivationInvariant,
@@ -51,9 +52,17 @@ async function restoreValidSchema() {
 
 async function tableNames() {
   const result = await adminPool.query<{ table_name: string }>(
-    "select table_name from information_schema.tables where table_schema='ace_hunter' order by 1",
+    `select table_name from information_schema.tables
+       where table_schema='ace_hunter' and table_name<>'schema_migrations' order by 1`,
   );
   return result.rows.map((row) => row.table_name);
+}
+
+async function appliedMigrations() {
+  const result = await adminPool.query<{ id: string; checksum: string }>(
+    "select id,checksum from ace_hunter.schema_migrations order by id",
+  );
+  return result.rows;
 }
 
 beforeAll(async () => {
@@ -115,7 +124,7 @@ describe("complete schema", () => {
               rolreplication,rolbypassrls
          from pg_roles where rolname like 'ace_hunter_%' order by 1`,
     );
-    expect(roles.rows).toEqual([
+    expect(roles.rows.filter((row) => ["ace_hunter_migrator", "ace_hunter_owner", "ace_hunter_runtime"].includes(row.rolname))).toEqual([
       {
         rolname: "ace_hunter_migrator",
         rolcanlogin: true,
@@ -146,6 +155,10 @@ describe("complete schema", () => {
         rolreplication: false,
         rolbypassrls: false,
       },
+    ]);
+    expect(roles.rows.map((row) => row.rolname)).toEqual([
+      "ace_hunter_github_runtime", "ace_hunter_mac_worker", "ace_hunter_migrator",
+      "ace_hunter_ops", "ace_hunter_owner", "ace_hunter_runtime",
     ]);
     expect(
       (
@@ -711,6 +724,42 @@ describe("complete schema", () => {
       completed_at: new Date("2026-07-19T00:00:00Z"),
       next_attempt_at: new Date("2026-07-18T23:59:00Z"),
     });
+  });
+});
+
+describe("versioned migration history", () => {
+  beforeEach(emptyOwnerSchema);
+
+  it("applies the strictly ordered manifest once and records each checksum", async () => {
+    await migrate(migratorPool, { expectedChecksum: migrationChecksum });
+
+    expect((await appliedMigrations()).map((row) => row.id)).toEqual(
+      migrations.map((migration) => migration.id),
+    );
+    await migrate(migratorPool, { expectedChecksum: migrationChecksum });
+    expect(await appliedMigrations()).toHaveLength(2);
+  });
+
+  it("adopts a complete legacy catalog before applying only pending migrations", async () => {
+    await migrate(migratorPool, { expectedChecksum: migrationChecksum });
+    await adminPool.query("drop table ace_hunter.schema_migrations");
+
+    await migrate(migratorPool, { expectedChecksum: migrationChecksum });
+
+    expect((await appliedMigrations()).map((row) => row.id)).toEqual(
+      migrations.map((migration) => migration.id),
+    );
+  });
+
+  it("rejects a recorded migration whose checksum no longer matches the manifest", async () => {
+    await migrate(migratorPool, { expectedChecksum: migrationChecksum });
+    await adminPool.query(
+      "update ace_hunter.schema_migrations set checksum='0' where id='0001_ace_hunter_initial'",
+    );
+
+    await expect(
+      migrate(migratorPool, { expectedChecksum: migrationChecksum }),
+    ).rejects.toThrow(/applied migration checksum mismatch/);
   });
 });
 
