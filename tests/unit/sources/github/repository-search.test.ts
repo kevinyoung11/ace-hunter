@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { GitHubRepository, GitHubSource, SearchSlice } from "../../../../src/sources/github/github-source.js";
+import * as repositorySearch from "../../../../src/sources/github/repository-search.js";
 import { candidateBuckets, searchCompletely, splitSearchSlice } from "../../../../src/sources/github/repository-search.js";
 
 function repo(id: number, stars = 10): GitHubRepository {
@@ -18,9 +19,27 @@ function repo(id: number, stars = 10): GitHubRepository {
 describe("candidateBuckets", () => {
   const at = new Date("2026-07-19T00:00:00Z");
 
-  it("assigns every matching bucket including exact boundaries", () => {
-    expect(candidateBuckets({ createdAt: new Date("2026-07-18T00:00:00Z"), stars: 1_000 }, at))
-      .toEqual(["age_1d_stars_10", "age_7d_stars_100", "age_30d_stars_1000"]);
+  it("exposes the candidate-v2 rule definitions through the compatible search API", () => {
+    expect(repositorySearch).toMatchObject({
+      candidateRuleVersion: "v2",
+      maximumCandidateAgeMs: 3 * 86_400_000,
+      candidateRules: [
+        { bucket: "age_1d_stars_10", maximumAgeMs: 86_400_000, minimumStars: 10 },
+        { bucket: "age_3d_stars_100", maximumAgeMs: 3 * 86_400_000, minimumStars: 100 },
+      ],
+    });
+  });
+
+  it("assigns every candidate-v2 bucket including exact boundaries", () => {
+    expect(candidateBuckets({ createdAt: new Date("2026-07-18T00:00:00Z"), stars: 100 }, at))
+      .toEqual(["age_1d_stars_10", "age_3d_stars_100"]);
+    expect(candidateBuckets({ createdAt: new Date("2026-07-16T00:00:00Z"), stars: 100 }, at))
+      .toEqual(["age_3d_stars_100"]);
+  });
+
+  it("excludes candidate-v2 buckets one millisecond after their age boundaries", () => {
+    expect(candidateBuckets({ createdAt: new Date("2026-07-17T23:59:59.999Z"), stars: 99 }, at)).toEqual([]);
+    expect(candidateBuckets({ createdAt: new Date("2026-07-15T23:59:59.999Z"), stars: 100_000 }, at)).toEqual([]);
   });
 
   it("rejects future, invalid, negative-star, and older repositories", () => {

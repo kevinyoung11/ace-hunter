@@ -46,7 +46,7 @@ describe("cutoff-safe report candidates", () => {
   });
 
   it("uses only Primary repositories and recomputes candidate and current Trending facts at cutoff", async () => {
-    const candidate = await seedProduct("candidate", "2026-07-14T00:00:00Z");
+    const candidate = await seedProduct("candidate", "2026-07-16T00:00:00Z");
     await snapshot(candidate.repositoryId, "2026-07-18T23:50:00Z", 150, ["stale_bucket"]);
     await snapshot(candidate.repositoryId, "2026-07-18T23:59:00Z", 999, [], "2026-07-19T00:30:00Z");
     const secondary = await seedRepository("candidate-secondary", "2026-07-18T00:00:00Z");
@@ -57,6 +57,11 @@ describe("cutoff-safe report candidates", () => {
     await snapshot(oldOnly.repositoryId, "2026-07-18T23:50:00Z", 5, ["age_30d_stars_1000"]);
     await trend(oldOnly.repositoryId, "daily", "2026-07-17T00:00:00Z", 1, "success");
     await trend(candidate.repositoryId, "daily", "2026-07-18T23:00:00Z", 1, "success");
+
+    const sevenDayOnly = await seedProduct("seven-day-only", "2026-07-14T00:00:00Z");
+    await snapshot(sevenDayOnly.repositoryId, "2026-07-18T23:50:00Z", 100);
+    const thirtyDayOnly = await seedProduct("thirty-day-only", "2026-06-29T00:00:00Z");
+    await snapshot(thirtyDayOnly.repositoryId, "2026-07-18T23:50:00Z", 1_000);
 
     const currentTrend = await seedProduct("current-trend", "2026-05-01T00:00:00Z");
     await snapshot(currentTrend.repositoryId, "2026-07-18T23:50:00Z", 5);
@@ -86,6 +91,8 @@ describe("cutoff-safe report candidates", () => {
     expect(rows.map((row) => row.productId).sort()).toEqual(
       [candidate.productId, currentTrend.productId].sort(),
     );
+    expect(rows.some((row) => row.productId === sevenDayOnly.productId)).toBe(false);
+    expect(rows.some((row) => row.productId === thirtyDayOnly.productId)).toBe(false);
     expect(rows.find((row) => row.productId === candidate.productId)).toMatchObject({
       repositoryId: candidate.repositoryId,
       stars: 150,
@@ -99,9 +106,9 @@ describe("cutoff-safe report candidates", () => {
   });
 
   it("builds a pre-Trending evaluation set without leaking a future first appearance", async () => {
-    const appeared = await seedProduct("already-trended", "2026-07-14T00:00:00Z");
-    const future = await seedProduct("future-trending", "2026-07-14T00:00:00Z");
-    const never = await seedProduct("never-trending", "2026-07-14T00:00:00Z");
+    const appeared = await seedProduct("already-trended", "2026-07-16T00:00:00Z");
+    const future = await seedProduct("future-trending", "2026-07-16T00:00:00Z");
+    const never = await seedProduct("never-trending", "2026-07-16T00:00:00Z");
     for (const repositoryId of [appeared.repositoryId, future.repositoryId, never.repositoryId]) {
       await snapshot(repositoryId, "2026-07-18T23:45:00Z", 120);
     }
@@ -131,7 +138,7 @@ describe("cutoff-safe report candidates", () => {
   });
 
   it("uses the nearest 24-hour reference within 90 minutes and cutoff-safe relevant X originals", async () => {
-    const product = await seedProduct("signals", "2026-07-14T00:00:00Z", "success_with_results");
+    const product = await seedProduct("signals", "2026-07-16T00:00:00Z", "success_with_results");
     await snapshot(product.repositoryId, "2026-07-18T23:55:00Z", 150);
     await snapshot(product.repositoryId, "2026-07-19T00:01:00Z", 9_999);
     await snapshot(product.repositoryId, "2026-07-17T22:20:00Z", 90);
@@ -161,7 +168,7 @@ describe("cutoff-safe report candidates", () => {
       xEngagement: 45,
     });
 
-    const outsideWindow = await seedProduct("outside-window", "2026-07-14T00:00:00Z");
+    const outsideWindow = await seedProduct("outside-window", "2026-07-16T00:00:00Z");
     await snapshot(outsideWindow.repositoryId, "2026-07-18T23:50:00Z", 120);
     await snapshot(outsideWindow.repositoryId, "2026-07-17T22:29:59Z", 90);
     expect((await loadReportCandidates(runtimePool, cutoff))
@@ -174,7 +181,7 @@ describe("cutoff-safe report candidates", () => {
     expect((await loadReportCandidates(runtimePool, cutoff))
       .find((candidate) => candidate.productId === product.productId)?.xStatus).toBe("success_with_results");
 
-    const historicalEmpty = await seedProduct("historical-empty", "2026-07-14T00:00:00Z", "success_empty");
+    const historicalEmpty = await seedProduct("historical-empty", "2026-07-16T00:00:00Z", "success_empty");
     await snapshot(historicalEmpty.repositoryId, "2026-07-18T23:50:00Z", 120);
     await xPost(historicalEmpty.productId, "older-result", { xCreatedAt: "2026-07-17T00:00:00Z" });
     await jobRun("historical-empty-success", "2026-07-18T22:00:00Z", "2026-07-18T22:05:00Z", "success",
@@ -186,7 +193,7 @@ describe("cutoff-safe report candidates", () => {
   });
 
   it("rejects integer facts that cannot be represented exactly in JavaScript", async () => {
-    const product = await seedProduct("unsafe-stars", "2026-07-14T00:00:00Z");
+    const product = await seedProduct("unsafe-stars", "2026-07-16T00:00:00Z");
     await runtimePool.query(`insert into ace_hunter.repository_snapshots
       (repository_id,captured_at,granularity,stars,collected_fields)
       values($1,'2026-07-18T23:00:00Z','hourly',9007199254740992,

@@ -9,6 +9,10 @@ export const migrationEnvSchema = z.object({
   ACE_HUNTER_MIGRATION_SHA256: z.string().regex(/^[a-f0-9]{64}$/),
 });
 
+export const readonlyRuntimeEnvSchema = z.object({
+  ACE_HUNTER_RUNTIME_DATABASE_URL: z.string().url(),
+});
+
 export const runtimeEnvSchema = z.object({
   ACE_HUNTER_RUNTIME_DATABASE_URL: z.string().url(),
   ACE_HUNTER_GITHUB_TOKEN: z.string().min(1),

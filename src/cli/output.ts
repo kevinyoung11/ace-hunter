@@ -52,10 +52,11 @@ export function writeCommandOutput(
 export async function executeCommand(
   io: CliIo,
   operation: () => Promise<CommandOutput>,
-  format: OutputFormat = "json",
+  format: OutputFormat | (() => OutputFormat) = "json",
 ): Promise<void> {
   try {
-    writeCommandOutput(io, await operation(), format);
+    const resolvedFormat = typeof format === "function" ? format() : format;
+    writeCommandOutput(io, await operation(), resolvedFormat);
   } catch (error) {
     io.stderr(`${safeErrorCode(error)}\n`);
     io.exit(1);

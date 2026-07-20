@@ -19,12 +19,8 @@ const workflowExpectations = {
     commands: ["discover_github_candidates"],
   },
   "trending.yml": {
-    cron: "7 */4 * * *",
-    commands: [
-      "collect_github_trending --period daily",
-      "collect_github_trending --period weekly",
-      "collect_github_trending --period monthly",
-    ],
+    cron: "7 0 * * *",
+    commands: ["collect_github_trending --period '${{ matrix.period }}'"],
   },
   "refresh-metrics.yml": {
     cron: "23 * * * *",
@@ -66,6 +62,19 @@ describe("hosted production schedules", () => {
     });
   }
 
+  it("runs each Trending period as an independent daily matrix child", async () => {
+    const yaml = await readFile(".github/workflows/trending.yml", "utf8");
+
+    expect(yaml).toContain("strategy:\n      fail-fast: false");
+    expect(yaml).toMatch(/matrix:\s+period:\s*\[daily, weekly, monthly\]/u);
+    expect(yaml).not.toMatch(/max-parallel\s*:\s*["']?1["']?(?:\s|$)/u);
+    expect(yaml.match(/job collect_github_trending --period/gu)).toHaveLength(1);
+    expect(yaml).toContain("job collect_github_trending --period '${{ matrix.period }}'");
+    for (const fixedPeriod of ["daily", "weekly", "monthly"]) {
+      expect(yaml).not.toContain(`job collect_github_trending --period ${fixedPeriod}`);
+    }
+  });
+
   it("keeps X manual in Actions and runs the complete X pipeline with one attribution", async () => {
     const yaml = await readFile(".github/workflows/collect-x.yml", "utf8");
 
@@ -84,6 +93,43 @@ describe("hosted production schedules", () => {
     expect(yaml.match(/--orchestrator-run-attempt '\$\{\{ github\.run_attempt \}\}'/gu)).toHaveLength(3);
     expect(yaml.match(/--orchestrator-workflow 'collect-x\.yml'/gu)).toHaveLength(3);
   });
+});
+
+it("documents direct deployment-managed Trending and potential routes", async () => {
+  const skill = await readFile("skills/ace-hunter/SKILL.md", "utf8");
+  const manifest = await readFile("skills/ace-hunter/agents/openai.yaml", "utf8");
+  const executable = `"$HOME/Library/Application Support/AceHunter/bin/ace-hunter"`;
+
+  for (const period of ["daily", "weekly", "monthly", "all"]) {
+    expect(skill).toContain(`${executable} trending ${period}`);
+  }
+  for (const rule of ["all", "1d", "3d"]) {
+    expect(skill).toContain(`${executable} potential --rule ${rule}`);
+  }
+  expect(skill).toContain("默认 Top 20");
+  expect(skill).toContain("--limit all");
+  expect(skill).toContain("不得改用 `today`");
+  expect(skill).toContain("source URL");
+  expect(skill).toContain("榜单采集时间");
+  expect(skill).toContain("Star 采集时间");
+  for (const state of ["stale", "available", "unavailable", "not_found"]) {
+    expect(skill).toContain(`\`${state}\``);
+  }
+  expect(skill).toContain("规则标签");
+  expect(skill).toContain("X");
+  expect(skill).toContain("不能解释成零讨论");
+  expect(skill).toMatch(/^description: .*GitHub 日榜、周榜、月榜、Trending、潜力项目/mu);
+  expect(skill).toMatch(/^description: .*查看关注.*取消关注/mu);
+  expect(skill).toContain("显式 `analyze`、`observe`、`follow`、`list` 或 `unfollow` 意图优先级最高");
+  expect(skill).toContain("显式 Trending/Potential signal 其次");
+  expect(skill).toContain("“新 Repo”只有与发现、潜力或筛选意图组合时才使用 `potential`");
+  expect(skill).toContain("只有无具体意图的泛化“今日值得关注”才使用 `today`");
+  expect(skill).toContain("“今日值得关注的 3d 潜力项目” → `potential`");
+  expect(skill).toContain("“分析新 Repo owner/repo” → `analyze`");
+  expect(skill).toContain("“观察新 Repo owner/repo” → `observe`");
+  expect(manifest).toMatch(/^ {2}display_name: "[^"]+"$/mu);
+  expect(manifest).toMatch(/^ {2}short_description: "[^"]+"$/mu);
+  expect(manifest).toMatch(/^ {2}default_prompt: "[^"]*\$ace-hunter[^"]*"$/mu);
 });
 
 it("runs every quality gate against PostgreSQL 14 in CI", async () => {
@@ -141,15 +187,28 @@ describe("portable Skill validator", () => {
     await expect(execFileAsync(process.execPath, ["scripts/validate-skill.mjs", missingManifest]))
       .rejects.toThrow();
   });
+
+  it("rejects nonconforming OpenAI interface metadata", async () => {
+    const unquoted = await makeSkill("valid-name", `interface:\n  display_name: Valid Name\n  short_description: "A sufficiently descriptive skill summary"\n  default_prompt: "Use $valid-name for this task."\n`);
+    const shortDescription = await makeSkill("valid-name", `interface:\n  display_name: "Valid Name"\n  short_description: "Too short"\n  default_prompt: "Use $valid-name for this task."\n`);
+    const missingSkillToken = await makeSkill("valid-name", `interface:\n  display_name: "Valid Name"\n  short_description: "A sufficiently descriptive skill summary"\n  default_prompt: "Use this skill for the task."\n`);
+
+    await expect(execFileAsync(process.execPath, ["scripts/validate-skill.mjs", unquoted]))
+      .rejects.toThrow(/must be quoted/u);
+    await expect(execFileAsync(process.execPath, ["scripts/validate-skill.mjs", shortDescription]))
+      .rejects.toThrow(/25-64/u);
+    await expect(execFileAsync(process.execPath, ["scripts/validate-skill.mjs", missingSkillToken]))
+      .rejects.toThrow(/\$valid-name/u);
+  });
 });
 
-async function makeSkill(name: string, withManifest: boolean): Promise<string> {
+async function makeSkill(name: string, manifest: boolean | string): Promise<string> {
   const directory = await mkdtemp(join(tmpdir(), "ace-hunter-skill-"));
   temporaryDirectories.push(directory);
   await writeFile(join(directory, "SKILL.md"), `---\nname: ${name}\ndescription: Test skill\n---\n`);
-  if (withManifest) {
+  if (manifest) {
     await mkdir(join(directory, "agents"));
-    await writeFile(join(directory, "agents/openai.yaml"), "interface: {}\n");
+    await writeFile(join(directory, "agents/openai.yaml"), typeof manifest === "string" ? manifest : "interface: {}\n");
   }
   return directory;
 }

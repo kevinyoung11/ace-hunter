@@ -30,19 +30,35 @@ case "$live_env" in "${temp_base}"/ace-hunter-live-*/runtime.env) ;; *) exit 1;;
 
 rollback_dir="${live_dir}/keychain-rollback"
 mkdir "$rollback_dir" && chmod 700 "$rollback_dir"
-keychain_committed=0
+transaction_helper="${live_dir}/release-transaction.mjs"
+cp scripts/release-transaction.mjs "$transaction_helper"
+chmod 600 "$transaction_helper"
+release_transaction="${live_dir}/release-rollback"
+transaction_started=0
+transaction_committed=0
 snapshot_complete=0
 cleanup() {
   trap - EXIT
   local restore_failed=0
-  if [[ "$keychain_committed" -eq 0 && "$snapshot_complete" -eq 1 ]]; then
+  if [[ "$transaction_started" -eq 1 ]]; then
+    if [[ "$transaction_committed" -eq 1 ]]; then
+      if ! node "$transaction_helper" commit "$release_transaction" >/dev/null; then
+        transaction_committed=0
+        restore_failed=1
+        node "$transaction_helper" rollback "$release_transaction" >/dev/null || restore_failed=1
+      fi
+    else
+      node "$transaction_helper" rollback "$release_transaction" >/dev/null || restore_failed=1
+    fi
+  fi
+  if [[ "$transaction_committed" -eq 0 && "$snapshot_complete" -eq 1 ]]; then
     for account in runtime-database-url github-token user-id deepseek-api-key; do
       if [[ -f "${rollback_dir}/${account}" ]]; then "$helper" set "$account" <"${rollback_dir}/${account}" || restore_failed=1
       elif [[ -f "${rollback_dir}/${account}.absent" ]]; then "$helper" delete "$account" >/dev/null 2>&1 || restore_failed=1; fi
     done
   fi
   if [[ "$restore_failed" -ne 0 ]]; then
-    printf 'keychain_rollback_failed artifact=%s\n' "$rollback_dir" >&2
+    printf 'release_rollback_failed artifact=%s\n' "$live_dir" >&2
     return 1
   fi
   case "$live_dir" in "${temp_base}"/ace-hunter-live-*) rm -rf "$live_dir";; esac
@@ -65,6 +81,8 @@ for account in runtime-database-url github-token user-id deepseek-api-key; do
   fi
 done
 snapshot_complete=1
+node "$transaction_helper" begin "$release_transaction" "$app_dir" "${CODEX_HOME:-$HOME/.codex}" >/dev/null
+transaction_started=1
 
 node --import tsx scripts/pipe-env-value.ts "$live_env" ACE_HUNTER_RUNTIME_DATABASE_URL | "$helper" set runtime-database-url
 node --import tsx scripts/pipe-env-value.ts "$live_env" ACE_HUNTER_GITHUB_TOKEN | "$helper" set github-token
@@ -87,8 +105,11 @@ done
 actual_names="$(gh secret list --repo "$GH_REPO" --env ace-hunter-production --json name --jq 'map(.name)|sort|join(",")')"
 [[ "$actual_names" = 'ACE_HUNTER_DEEPSEEK_API_KEY,ACE_HUNTER_GITHUB_TOKEN,ACE_HUNTER_RUNTIME_DATABASE_URL,ACE_HUNTER_USER_ID' ]] || exit 1
 
-ops/launchd/deploy-main.sh "$main_sha" "$live_env"
-keychain_committed=1
-rm -rf "$rollback_dir"
+ops/launchd/deploy-main.sh "$main_sha" "$live_env" "$release_transaction"
 release="${app_dir}/releases/${main_sha}"
-exec "${release}/scripts/continue-post-merge-release.sh" "$live_env" "$old_worktree" "$pr_head" "$main_sha" "$repo_root"
+cd "$release"
+"${release}/scripts/continue-post-merge-release.sh" \
+  "$live_env" "$old_worktree" "$pr_head" "$main_sha" "$repo_root" "$release_transaction"
+transaction_committed=1
+cleanup
+trap - EXIT HUP INT TERM

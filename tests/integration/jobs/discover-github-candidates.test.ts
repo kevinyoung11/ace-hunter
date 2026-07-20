@@ -85,7 +85,7 @@ describe("createProductFromRepo", () => {
   });
 });
 
-it("runs all rules, refreshes facts, excludes ineligible repos, and writes one idempotent hourly snapshot", async () => {
+it("runs candidate-v2 rules, refreshes facts, excludes ineligible repos, and writes one idempotent hourly snapshot", async () => {
   const candidates = [
     githubRepo({ githubRepoId: 1, stars: 1_100, createdAt: new Date("2026-07-18T12:00:00Z") }),
     githubRepo({ githubRepoId: 2, description: "  ", hasReadme: false }),
@@ -103,9 +103,25 @@ it("runs all rules, refreshes facts, excludes ineligible repos, and writes one i
   expect((await runtimePool.query("select count(*)::int n from ace_hunter.repositories")).rows[0].n).toBe(2);
   const snapshot = (await runtimePool.query("select captured_at,candidate_buckets,candidate_rule_version,collected_fields from ace_hunter.repository_snapshots rs join ace_hunter.repositories r on r.id=rs.repository_id where r.github_repo_id=1")).rows[0];
   expect(snapshot.captured_at.toISOString()).toBe("2026-07-19T00:00:00.000Z");
-  expect(snapshot.candidate_buckets).toEqual(["age_1d_stars_10", "age_7d_stars_100", "age_30d_stars_1000"]);
-  expect(snapshot.candidate_rule_version).toBe("v1");
+  expect(snapshot.candidate_buckets).toEqual(["age_1d_stars_10", "age_3d_stars_100"]);
+  expect(snapshot.candidate_rule_version).toBe("v2");
   expect(snapshot.collected_fields).toMatchObject({ core: true, source_job_run_id: "123e4567-e89b-42d3-a456-426614174000" });
+});
+
+it("searches exactly the candidate-v2 time and star ranges", async () => {
+  const source = fakeSource([]);
+  const searches: Array<{ from: Date; to: Date; minStars: number }> = [];
+  source.searchRepositories = async (slice) => {
+    searches.push({ from: slice.from, to: slice.to, minStars: slice.minStars });
+    return { totalCount: 0, repositories: [], hasNextPage: false, nextPage: null };
+  };
+  await discoverGithubCandidates({
+    pool: runtimePool, sourceFactory: factoryFrom(source), emitOperationalEvent: () => undefined,
+  }, new Date("2026-07-19T00:34:00.123Z"));
+  expect(searches).toEqual([
+    { from: new Date("2026-07-18T00:34:00Z"), to: new Date("2026-07-19T00:34:00Z"), minStars: 10 },
+    { from: new Date("2026-07-16T00:34:00Z"), to: new Date("2026-07-19T00:34:00Z"), minStars: 100 },
+  ]);
 });
 
 it("normalizes an actual invocation time to GitHub's whole-second search precision", async () => {

@@ -1,4 +1,5 @@
 import type { Pool } from "pg";
+import { candidateBuckets, maximumCandidateAgeMs } from "../sources/github/candidate-rules.js";
 
 export type ReportTrendingPeriod = "daily" | "weekly" | "monthly";
 export type ReportXStatus = "success_with_results" | "success_empty" | "unavailable";
@@ -25,6 +26,7 @@ export interface ReportCandidate {
 interface CandidateRow {
   product_id: string;
   repository_id: string;
+  github_created_at: Date;
   snapshot_observed_at: Date;
   stars: string;
   stars_24h_ago: string | null;
@@ -35,7 +37,6 @@ interface CandidateRow {
   x_engagement: string;
   trending: ReportTrendingPeriod[];
   trending_ranks: Record<string, number>;
-  candidate_at_cutoff: boolean;
   first_trending_at: Date | null;
 }
 
@@ -143,7 +144,7 @@ export async function loadReportCandidates(pool: Pool, cutoff: Date): Promise<Re
       group by product_id
     ),
     facts as (
-      select p.id product_id,r.id repository_id,latest.snapshot_observed_at,latest.stars,reference.stars stars_24h_ago,
+      select p.id product_id,r.id repository_id,r.github_created_at,latest.snapshot_observed_at,latest.stars,reference.stars stars_24h_ago,
         extract(epoch from ($1-r.github_created_at))/3600 repo_age_hours,
         case
           when product_x_run.status='success' and coalesce(product_x_run.items_expected,0)>0 then 'success_with_results'
@@ -158,12 +159,7 @@ export async function loadReportCandidates(pool: Pool, cutoff: Date): Promise<Re
         coalesce(x.x_posts,0) x_posts,coalesce(x.x_authors,0) x_authors,
         coalesce(x.x_engagement,0) x_engagement,
         coalesce(trend.trending,'{}'::text[]) trending,
-        coalesce(trend.trending_ranks,'{}'::jsonb) trending_ranks,first.first_trending_at,
-        (r.github_created_at <= $1 and (
-          ($1-r.github_created_at <= interval '1 day' and latest.stars>=10) or
-          ($1-r.github_created_at <= interval '7 days' and latest.stars>=100) or
-          ($1-r.github_created_at <= interval '30 days' and latest.stars>=1000)
-        )) candidate_at_cutoff
+        coalesce(trend.trending_ranks,'{}'::jsonb) trending_ranks,first.first_trending_at
       from ace_hunter.products p
       join primary_repo pr on pr.product_id=p.id
       join ace_hunter.repositories r on r.id=pr.repository_id
@@ -185,31 +181,35 @@ export async function loadReportCandidates(pool: Pool, cutoff: Date): Promise<Re
       where p.status='active' and r.status='active' and r.github_created_at <= $1
     )
     select * from facts
-    where candidate_at_cutoff or cardinality(trending)>0
-    order by product_id`, [cutoff]);
+    where github_created_at >= $2 or cardinality(trending)>0
+    order by product_id`, [cutoff, new Date(cutoff.getTime() - maximumCandidateAgeMs)]);
 
-  return result.rows.map((row) => ({
-    productId: row.product_id,
-    repositoryId: row.repository_id,
-    snapshotObservedAt: row.snapshot_observed_at,
-    stars: toSafeInteger(row.stars, "stars"),
-    stars24hAgo: row.stars_24h_ago === null ? null : toSafeInteger(row.stars_24h_ago, "stars24hAgo"),
-    repoAgeHours: toFiniteNonnegative(row.repo_age_hours, "repoAgeHours"),
-    xStatus: row.x_status,
-    xPosts: toSafeInteger(row.x_posts, "xPosts"),
-    xAuthors: toSafeInteger(row.x_authors, "xAuthors"),
-    xEngagement: toSafeInteger(row.x_engagement, "xEngagement"),
-    trending: row.trending,
-    trendingRanks: Object.fromEntries(
-      Object.entries(row.trending_ranks).map(([period, rank]) => [
-        period,
-        toSafeInteger(rank, `trendingRanks.${period}`),
-      ]),
-    ),
-    candidateAtCutoff: row.candidate_at_cutoff,
-    firstTrendingAt: row.first_trending_at,
-    preTrendingEligible: row.first_trending_at === null,
-  }));
+  return result.rows.map((row) => {
+    const stars = toSafeInteger(row.stars, "stars");
+    const candidateAtCutoff = candidateBuckets({ createdAt: row.github_created_at, stars }, cutoff).length > 0;
+    return {
+      productId: row.product_id,
+      repositoryId: row.repository_id,
+      snapshotObservedAt: row.snapshot_observed_at,
+      stars,
+      stars24hAgo: row.stars_24h_ago === null ? null : toSafeInteger(row.stars_24h_ago, "stars24hAgo"),
+      repoAgeHours: toFiniteNonnegative(row.repo_age_hours, "repoAgeHours"),
+      xStatus: row.x_status,
+      xPosts: toSafeInteger(row.x_posts, "xPosts"),
+      xAuthors: toSafeInteger(row.x_authors, "xAuthors"),
+      xEngagement: toSafeInteger(row.x_engagement, "xEngagement"),
+      trending: row.trending,
+      trendingRanks: Object.fromEntries(
+        Object.entries(row.trending_ranks).map(([period, rank]) => [
+          period,
+          toSafeInteger(rank, `trendingRanks.${period}`),
+        ]),
+      ),
+      candidateAtCutoff,
+      firstTrendingAt: row.first_trending_at,
+      preTrendingEligible: row.first_trending_at === null,
+    };
+  }).filter((candidate) => candidate.candidateAtCutoff || candidate.trending.length > 0);
 }
 
 function requireValidCutoff(cutoff: Date): void {

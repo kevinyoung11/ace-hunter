@@ -1,10 +1,13 @@
 import { execFile as execFileCallback } from "node:child_process";
 import { promisify } from "node:util";
 import { readFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { parse } from "dotenv";
 import { Pool } from "pg";
 import { z } from "zod";
 import { loadRuntimeConfig } from "../src/config/load-config.js";
+import { verifyAcceptedCandidateSnapshots } from "./accepted-candidate-provenance.js";
+import { verifyAcceptedSignalOutput } from "./accepted-trending-output.js";
 
 const execFile = promisify(execFileCallback);
 const runSchema = z.array(z.object({
@@ -15,6 +18,7 @@ const runSchema = z.array(z.object({
 const startedAt = requiredDate("ACCEPTANCE_STARTED_AT");
 const kickstartBoundary = requiredDate("KICKSTART_BOUNDARY");
 const runsPath = requiredAbsolute("ACCEPTANCE_RUN_IDS_FILE");
+const smokeDir = requiredAbsolute("SIGNAL_SMOKE_DIR");
 const mainSha = required("MAIN_SHA", /^[a-f0-9]{40}$/u);
 const expectedRuns = runSchema.parse(JSON.parse(await readFile(runsPath, "utf8")));
 const pool = new Pool({ connectionString: loadRuntimeConfig(process.env).runtimeDatabaseUrl });
@@ -52,6 +56,49 @@ try {
   if (JSON.stringify(periods) !== JSON.stringify(["daily", "monthly", "weekly"])) {
     throw new Error("missing_trending_period");
   }
+  const candidateSourceJobIds = jobs.rows.filter((row) =>
+    (row.job_name === "discover_github_candidates" && belongs(row, "discover.yml")) ||
+    (row.job_name === "refresh_repo_metrics" && belongs(row, "refresh-metrics.yml")))
+    .map((row) => row.id);
+  await verifyAcceptedCandidateSnapshots(pool, startedAt, candidateSourceJobIds);
+  const trendingRun = expectedRuns.find((item) => item.workflow === "trending.yml");
+  if (trendingRun === undefined) throw new Error("missing_complete_trending_batch");
+  const completeTrending = await pool.query<{ period: string; captured_at: Date; job_run_id: string }>(`with candidate_batches as (
+      select trending.period,trending.captured_at,
+        min(trending.job_run_id::text)::uuid job_run_id,count(*)::int row_count
+      from ace_hunter.github_trending_snapshots trending
+      where trending.language='all'
+        and trending.period=any(array['daily','weekly','monthly']::text[])
+      group by trending.period,trending.captured_at
+      having count(trending.job_run_id)=count(*)
+        and count(distinct trending.job_run_id)=1
+        and bool_and(trending.collection_status='success')
+    )
+    select distinct candidate.period,candidate.captured_at,candidate.job_run_id
+    from candidate_batches candidate
+    join ace_hunter.job_runs run on run.id=candidate.job_run_id
+    where run.job_name='collect_github_trending'
+      and run.status='success' and run.completed_at is not null
+      and run.completed_at >= $1
+      and run.items_failed=0 and run.items_succeeded=candidate.row_count
+      and run.parameters->>'orchestrator_workflow'='trending.yml'
+      and run.parameters->>'orchestrator_run_id'=$2
+      and run.parameters->>'orchestrator_run_attempt'=$3
+    order by candidate.period`, [
+    startedAt, String(trendingRun.databaseId), String(trendingRun.runAttempt),
+  ]);
+  if (JSON.stringify(completeTrending.rows.map((row) => row.period)) !==
+      JSON.stringify(["daily", "monthly", "weekly"])) {
+    throw new Error("missing_complete_trending_batch");
+  }
+  await verifyAcceptedSignalOutput({
+    pool,
+    smokeDir,
+    expectedSmokeDir: join(dirname(runsPath), "release-rollback", "continuation-smoke"),
+    batches: completeTrending.rows.map((row) => ({
+      period: row.period, capturedAt: row.captured_at, jobRunId: row.job_run_id,
+    })),
+  });
   const outputs = await pool.query<{ output_type: string }>(`select output_type from ace_hunter.analysis_outputs
     where (output_type='daily_report' and completed_at >= $1)
        or (output_type='realtime_observation' and created_at >= $1)`, [startedAt]);

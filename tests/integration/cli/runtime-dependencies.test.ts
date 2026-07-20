@@ -3,6 +3,8 @@ import { Pool } from "pg";
 import { createProgram, type CliExitCode } from "../../../src/cli/index.js";
 import {
   createDatabaseCliDependencies,
+  createLazyProductionCliRuntime,
+  createReadonlySignalCliDependencies,
   loadProductFreshness,
   persistRealtimeObservation,
 } from "../../../src/cli/runtime-dependencies.js";
@@ -64,6 +66,84 @@ it("executes stored report, analysis, and monitor commands against the runtime d
       expect.objectContaining({ job_name: "user_follow", parameters: { productId: product.productId, userId } }),
       expect.objectContaining({ job_name: "user_unfollow", parameters: { productId: product.productId, userId } }),
     ]));
+});
+
+it("returns potential and verified trending facts through the actual command path", async () => {
+  const product = await seedProduct("signal-repo");
+  const potential = await invoke(["potential", "--rule", "3d", "--format", "json"]);
+  expect(potential.exitCodes).toEqual([]);
+  expect(JSON.parse(potential.stdout[0])).toMatchObject({
+    kind: "potential_repositories",
+    rule: "3d",
+    generatedAt: "2026-07-19T00:30:00.000Z",
+    items: [{ fullName: "owner/signal-repo", stars: 100, matchedRules: ["3d"] }],
+  });
+
+  const runId = (await runtimePool.query<{ id: string }>(`insert into ace_hunter.job_runs
+    (job_name,trigger_type,scheduled_for,status,started_at,completed_at,
+      items_expected,items_succeeded,items_failed,items_skipped,idempotency_key)
+    values('collect_github_trending','schedule','2026-07-19T00:00:00Z','success',
+      '2026-07-19T00:00:00Z','2026-07-19T00:20:00Z',1,1,0,0,'cli-trending') returning id`)).rows[0].id;
+  await runtimePool.query(`insert into ace_hunter.github_trending_snapshots
+    (repository_id,period,language,captured_at,rank,stars_in_period,source_url,collection_status,job_run_id)
+    values($1,'daily','all','2026-07-19T00:10:00Z',1,40,
+      'https://github.com/trending?since=daily','success',$2)`, [product.repositoryId, runId]);
+
+  const trending = await invoke(["trending", "daily", "--limit", "all", "--format", "json"]);
+  expect(trending.exitCodes).toEqual([]);
+  expect(JSON.parse(trending.stdout[0])).toMatchObject({
+    kind: "trending_lists",
+    period: "daily",
+    generatedAt: "2026-07-19T00:30:00.000Z",
+    lists: [{
+      period: "daily",
+      status: "available",
+      capturedAt: "2026-07-19T00:10:00.000Z",
+      items: [{ fullName: "owner/signal-repo", rank: 1, stars: 100, starsInPeriod: 40 }],
+    }],
+  });
+});
+
+it("starts read-only commands without GitHub, X, model, or user credentials", async () => {
+  await seedProduct("readonly-repo");
+  const stdout: string[] = [];
+  const stderr: string[] = [];
+  const exitCodes: CliExitCode[] = [];
+  const io = {
+    stdout: (value: string) => stdout.push(value),
+    stderr: (value: string) => stderr.push(value),
+    exit: (code: CliExitCode) => exitCodes.push(code),
+  };
+  const runtime = createLazyProductionCliRuntime({
+    ACE_HUNTER_RUNTIME_DATABASE_URL: config.runtimeDatabaseUrl,
+  }, io);
+  try {
+    await createProgram(runtime.dependencies).parseAsync([
+      "node", "ace-hunter", "potential", "--format", "json",
+    ]);
+    expect(exitCodes).toEqual([]);
+    expect(stderr).toEqual([]);
+    expect(JSON.parse(stdout[0])).toMatchObject({
+      kind: "potential_repositories",
+      items: [expect.objectContaining({ fullName: "owner/readonly-repo" })],
+    });
+  } finally {
+    await runtime.close();
+  }
+});
+
+it("fixes the database cutoff once per read-only invocation", async () => {
+  await seedProduct("fixed-cutoff");
+  let calls = 0;
+  const dependencies = createReadonlySignalCliDependencies({
+    pool: runtimePool,
+    now: () => {
+      calls += 1;
+      return new Date("2026-07-19T00:30:00Z");
+    },
+  });
+  await dependencies.potential({ rule: "all", limit: 20 });
+  expect(calls).toBe(1);
 });
 
 it("does not call a collected-but-unanalyzed X result fresh", async () => {
@@ -169,9 +249,10 @@ async function seedProduct(repositoryName: string, productName = repositoryName)
     (product_id,repository_id,role,is_primary,link_source) values($1,$2,'primary',true,'github')`,
   [productId, repositoryId]);
   await runtimePool.query(`insert into ace_hunter.repository_snapshots
-    (repository_id,captured_at,granularity,stars,forks,collected_fields)
+    (repository_id,captured_at,granularity,stars,forks,collected_fields,created_at)
     values($1,'2026-07-19T00:00:00Z','hourly',100,10,
-      '{"observed_at":"2026-07-19T00:00:00.000Z","metadata":{"name":"repo","repo_url":"https://github.com/owner/repo"}}')`,
+      '{"observed_at":"2026-07-19T00:00:00.000Z","metadata":{"name":"repo","repo_url":"https://github.com/owner/repo"}}',
+      '2026-07-19T00:00:00Z')`,
   [repositoryId]);
   return { productId, repositoryId };
 }

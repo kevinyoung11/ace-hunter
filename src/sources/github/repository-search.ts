@@ -1,22 +1,16 @@
 import { GitHubSourceError, type GitHubRepository, type GitHubSource, type SearchSlice } from "./github-source.js";
 
-const secondMs = 1_000;
-const dayMs = 86_400_000;
-const maxSlices = 20_000;
+export {
+  candidateBuckets,
+  candidateRules,
+  candidateRuleVersion,
+  maximumCandidateAgeMs,
+  type CandidateBucket,
+  type CandidateRule,
+} from "./candidate-rules.js";
 
-export function candidateBuckets(repo: { createdAt: Date; stars: number }, at: Date): string[] {
-  const created = repo.createdAt.getTime();
-  const now = at.getTime();
-  if (!Number.isFinite(created) || !Number.isFinite(now) || !Number.isSafeInteger(repo.stars) || repo.stars < 0 || created > now) {
-    throw new Error("invalid_candidate");
-  }
-  const age = now - created;
-  return [
-    age <= dayMs && repo.stars >= 10 ? "age_1d_stars_10" : null,
-    age <= 7 * dayMs && repo.stars >= 100 ? "age_7d_stars_100" : null,
-    age <= 30 * dayMs && repo.stars >= 1_000 ? "age_30d_stars_1000" : null,
-  ].filter((value): value is string => value !== null);
-}
+const secondMs = 1_000;
+const maxSlices = 20_000;
 
 export function splitSearchSlice(slice: SearchSlice): [SearchSlice, SearchSlice] {
   validateSlice(slice);

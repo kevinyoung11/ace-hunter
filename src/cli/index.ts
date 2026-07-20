@@ -4,12 +4,16 @@ import { Command, CommanderError } from "commander";
 import type { JobInput } from "../jobs/job-runner.js";
 import { loadRedactionRegistry } from "../config/load-config.js";
 import { log } from "../core/logger.js";
+import type { PotentialRule } from "../reports/potential-list.js";
+import type { TrendingListPeriod } from "../reports/trending-list.js";
 import { registerAnalyzeCommand } from "./commands/analyze.js";
 import { registerFollowCommands } from "./commands/follow.js";
 import { registerJobCommand } from "./commands/jobs.js";
 import { registerMonitorsCommand } from "./commands/monitors.js";
 import { registerObserveCommand } from "./commands/observe.js";
+import { registerPotentialCommand } from "./commands/potential.js";
 import { registerTodayCommand } from "./commands/today.js";
+import { registerTrendingCommand } from "./commands/trending.js";
 import { processIo, type CliIo, type CommandOutput } from "./output.js";
 import { createLazyProductionCliRuntime } from "./runtime-dependencies.js";
 
@@ -17,6 +21,8 @@ export type { CliExitCode } from "./output.js";
 
 export interface CliDependencies {
   today(): Promise<CommandOutput>;
+  potential(options: { rule: PotentialRule; limit: number | null }): Promise<CommandOutput>;
+  trending(options: { period: TrendingListPeriod; limit: number | null }): Promise<CommandOutput>;
   analyze(target: string): Promise<CommandOutput>;
   observe(target: string): Promise<CommandOutput>;
   follow(target: string): Promise<CommandOutput>;
@@ -35,6 +41,8 @@ export function createProgram(dependencies: CliDependencies): Command {
     .exitOverride();
 
   registerTodayCommand(program, dependencies);
+  registerPotentialCommand(program, dependencies);
+  registerTrendingCommand(program, dependencies);
   registerAnalyzeCommand(program, dependencies);
   registerObserveCommand(program, dependencies);
   registerFollowCommands(program, dependencies);
@@ -52,6 +60,8 @@ function unavailable(): Promise<never> {
 export function unavailableDependencies(io: CliIo = processIo): CliDependencies {
   return {
     today: unavailable,
+    potential: unavailable,
+    trending: unavailable,
     analyze: unavailable,
     observe: unavailable,
     follow: unavailable,
@@ -63,13 +73,9 @@ export function unavailableDependencies(io: CliIo = processIo): CliDependencies 
 }
 
 async function main(): Promise<void> {
-  let commanderErrorOutput = "";
   const runtime = createLazyProductionCliRuntime(process.env);
-  const program = createProgram(runtime.dependencies).configureOutput({
-    writeErr: (value) => {
-      commanderErrorOutput += value;
-    },
-  });
+  const program = createProgram(runtime.dependencies);
+  configureSafeCommanderErrors(program);
   try {
     await program.parseAsync(process.argv);
   } catch (error) {
@@ -80,17 +86,29 @@ async function main(): Promise<void> {
       process.exitCode = 0;
       return;
     }
+    if (error instanceof CommanderError) {
+      process.stderr.write(`${safeCommanderErrorCode(error)}\n`);
+      process.exitCode = 1;
+      return;
+    }
     log(
       "error",
-      error instanceof CommanderError
-        ? `CLI argument error: ${error.code}`
-        : commanderErrorOutput.trim() || "CLI command failed",
+      "CLI command failed",
       loadRedactionRegistry(process.env),
     );
     process.exitCode = 1;
   } finally {
     await runtime.close();
   }
+}
+
+function configureSafeCommanderErrors(command: Command): void {
+  command.exitOverride().configureOutput({ writeErr: () => undefined });
+  for (const child of command.commands) configureSafeCommanderErrors(child);
+}
+
+function safeCommanderErrorCode(error: CommanderError): "validation_error" | "command_failed" {
+  return error.code.startsWith("commander.") ? "validation_error" : "command_failed";
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {

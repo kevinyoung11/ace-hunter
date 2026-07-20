@@ -2,14 +2,33 @@
 set -euo pipefail
 umask 077
 
-[[ $# -eq 2 && "$1" =~ ^[0-9a-f]{40}$ && "$2" = /* ]] || { printf 'usage_error\n' >&2; exit 1; }
+[[ $# -eq 3 && "$1" =~ ^[0-9a-f]{40}$ && "$2" = /* && "$3" = /* ]] || { printf 'usage_error\n' >&2; exit 1; }
 main_sha="$1"
 live_env="$2"
+transaction="$3"
 [[ -f "$live_env" && ! -L "$live_env" ]] || { printf 'invalid_live_env\n' >&2; exit 1; }
+script_dir="$(cd "$(dirname "$0")" && pwd -P)"
+repo_root="$(cd "${script_dir}/../.." && pwd -P)"
+transaction_helper="${repo_root}/scripts/release-transaction.mjs"
+integrity_helper="${repo_root}/scripts/release-integrity.mjs"
 git fetch --quiet origin main
 remote_main="$(git rev-parse origin/main)"
 [[ "$main_sha" = "$remote_main" ]] || { printf 'sha_not_remote_main\n' >&2; exit 1; }
 git cat-file -e "${main_sha}^{commit}"
+
+node_path="$(command -v node)"
+node_path="$(realpath "$node_path")"
+"$node_path" "$transaction_helper" verify "$transaction" >/dev/null
+rollback_exit() {
+  local status="$1"
+  trap - ERR HUP INT TERM
+  "$node_path" "$transaction_helper" rollback "$transaction" >/dev/null || status=1
+  exit "$status"
+}
+trap 'rollback_exit $?' ERR
+trap 'rollback_exit 129' HUP
+trap 'rollback_exit 130' INT
+trap 'rollback_exit 143' TERM
 
 app_dir="${HOME}/Library/Application Support/AceHunter"
 releases_dir="${app_dir}/releases"
@@ -17,18 +36,31 @@ candidate="${releases_dir}/${main_sha}"
 case "$candidate" in *'.config/superpowers/worktrees'*) printf 'worktree_release_rejected\n' >&2; exit 1;; esac
 mkdir -p "$releases_dir" "${app_dir}/bin"
 chmod 700 "$app_dir" "$releases_dir" "${app_dir}/bin"
-if [[ ! -d "$candidate" ]]; then
+if [[ -e "$candidate" || -L "$candidate" ]]; then
+  [[ -d "$candidate" && ! -L "$candidate" ]] || { printf 'release_path_invalid\n' >&2; exit 1; }
+  "$node_path" "$integrity_helper" verify "$candidate" "$main_sha" >/dev/null
+else
   candidate_tmp="${releases_dir}/.${main_sha}.$$"
   mkdir "$candidate_tmp"
   git archive "$main_sha" | tar -x -C "$candidate_tmp"
   (cd "$candidate_tmp" && npm ci && npm run build && npm run skill:validate)
-  printf '{"sha":"%s","created_at":"%s"}\n' "$main_sha" "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" >"${candidate_tmp}/release-manifest.json"
+  "$node_path" "$integrity_helper" seal "$candidate_tmp" "$main_sha" >/dev/null
+  "$node_path" "$integrity_helper" verify "$candidate_tmp" "$main_sha" >/dev/null
   mv "$candidate_tmp" "$candidate"
 fi
-node_path="$(command -v node)"
-node_path="$(realpath "$node_path")"
+"$node_path" "$integrity_helper" verify "$candidate" "$main_sha" >/dev/null
 ACE_HUNTER_ENV_FILE="$live_env" "$node_path" "${candidate}/dist/src/cli/index.js" list >/dev/null
 "$node_path" "${candidate}/scripts/validate-skill.mjs" "${candidate}/skills/ace-hunter" >/dev/null
+
+readonly_env="${transaction}/readonly.env"
+readonly_tmp="${readonly_env}.new.$$"
+"$node_path" "${candidate}/dist/scripts/pipe-env-value.js" "$live_env" ACE_HUNTER_RUNTIME_DATABASE_URL |
+  "$node_path" "${candidate}/dist/scripts/pipe-env-value.js" ACE_HUNTER_RUNTIME_DATABASE_URL >"$readonly_tmp"
+chmod 600 "$readonly_tmp"
+mv "$readonly_tmp" "$readonly_env"
+smoke_dir="${transaction}/deploy-smoke"
+mkdir "$smoke_dir"
+chmod 700 "$smoke_dir"
 
 current="${app_dir}/current"
 wrapper="${app_dir}/bin/ace-hunter"
@@ -42,35 +74,9 @@ if [[ -e "$skill_link" || -L "$skill_link" ]]; then
   skill_target="$(readlink "$skill_link")"
   case "$skill_target" in "$app_dir"/*) ;; *) printf 'skill_conflict\n' >&2; exit 1;; esac
 fi
-
-transaction="$(mktemp -d "${app_dir}/.deploy.XXXXXX")"
-cleanup_transaction() { rm -rf "$transaction"; }
-trap cleanup_transaction EXIT
-for artifact in current wrapper skill; do printf 'absent\n' >"${transaction}/${artifact}.state"; done
-if [[ -L "$current" ]]; then readlink "$current" >"${transaction}/current.target"; printf 'link\n' >"${transaction}/current.state"; fi
-if [[ -f "$wrapper" && ! -L "$wrapper" ]]; then cp -p "$wrapper" "${transaction}/wrapper.bytes"; printf 'file\n' >"${transaction}/wrapper.state"; fi
-if [[ -L "$skill_link" ]]; then readlink "$skill_link" >"${transaction}/skill.target"; printf 'link\n' >"${transaction}/skill.state"; fi
-rollback() {
-  trap - ERR HUP INT TERM
-  rm -f "$current" "$wrapper" "$skill_link"
-  if [[ "$(cat "${transaction}/current.state")" = link ]]; then ln -s "$(cat "${transaction}/current.target")" "${current}.rollback.$$"; atomic_replace "${current}.rollback.$$" "$current"; fi
-  if [[ "$(cat "${transaction}/wrapper.state")" = file ]]; then cp -p "${transaction}/wrapper.bytes" "${wrapper}.rollback.$$"; atomic_replace "${wrapper}.rollback.$$" "$wrapper"; fi
-  if [[ "$(cat "${transaction}/skill.state")" = link ]]; then ln -s "$(cat "${transaction}/skill.target")" "${skill_link}.rollback.$$"; atomic_replace "${skill_link}.rollback.$$" "$skill_link"; fi
-}
 atomic_replace() {
   "$node_path" -e 'require("node:fs").renameSync(process.argv[1],process.argv[2])' "$1" "$2"
 }
-rollback_exit() {
-  local status="$1"
-  rollback
-  cleanup_transaction
-  trap - EXIT
-  exit "$status"
-}
-trap 'rollback_exit $?' ERR
-trap 'rollback_exit 129' HUP
-trap 'rollback_exit 130' INT
-trap 'rollback_exit 143' TERM
 ln -s "$candidate" "${current}.new.$$"
 atomic_replace "${current}.new.$$" "$current"
 wrapper_tmp="${wrapper}.new.$$"
@@ -83,7 +89,20 @@ atomic_replace "$wrapper_tmp" "$wrapper"
 ln -s "${current}/skills/ace-hunter" "${skill_link}.new.$$"
 atomic_replace "${skill_link}.new.$$" "$skill_link"
 ACE_HUNTER_ENV_FILE="$live_env" "$wrapper" list >/dev/null
+env -i HOME="$HOME" PATH="/usr/bin:/bin" NODE_PATH="$node_path" \
+  ACE_HUNTER_ENV_FILE="$readonly_env" "$wrapper" potential --format json >"${smoke_dir}/potential.json"
+env -i HOME="$HOME" PATH="/usr/bin:/bin" NODE_PATH="$node_path" \
+  ACE_HUNTER_ENV_FILE="$readonly_env" "$wrapper" trending daily --format json >"${smoke_dir}/daily.json"
+env -i HOME="$HOME" PATH="/usr/bin:/bin" NODE_PATH="$node_path" \
+  ACE_HUNTER_ENV_FILE="$readonly_env" "$wrapper" trending weekly --format json >"${smoke_dir}/weekly.json"
+env -i HOME="$HOME" PATH="/usr/bin:/bin" NODE_PATH="$node_path" \
+  ACE_HUNTER_ENV_FILE="$readonly_env" "$wrapper" trending monthly --format json >"${smoke_dir}/monthly.json"
+env -i HOME="$HOME" PATH="/usr/bin:/bin" NODE_PATH="$node_path" \
+  ACE_HUNTER_ENV_FILE="$readonly_env" "$wrapper" trending all --format json >"${smoke_dir}/all.json"
+chmod 600 "${smoke_dir}"/*.json
+"$node_path" "${candidate}/dist/scripts/validate-signal-release.js" allow-empty \
+  "${smoke_dir}/potential.json" "${smoke_dir}/daily.json" "${smoke_dir}/weekly.json" \
+  "${smoke_dir}/monthly.json" "${smoke_dir}/all.json" >/dev/null
 "$node_path" "${current}/scripts/validate-skill.mjs" "$skill_link" >/dev/null
 trap - ERR HUP INT TERM
-trap cleanup_transaction EXIT
 printf 'deployed %s\n' "$main_sha"

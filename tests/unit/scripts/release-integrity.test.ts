@@ -1,0 +1,52 @@
+import { execFile as execFileCallback } from "node:child_process";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { promisify } from "node:util";
+import { afterEach, beforeEach, expect, it } from "vitest";
+
+const execFile = promisify(execFileCallback);
+const sha = "b".repeat(40);
+let root: string;
+
+beforeEach(async () => { root = await mkdtemp(join(tmpdir(), "ace-hunter-release-integrity-")); });
+afterEach(async () => { await rm(root, { recursive: true, force: true }); });
+
+it("seals and re-verifies immutable release content including safe internal symlinks", async () => {
+  const release = join(root, "release");
+  await mkdir(join(release, "bin"), { recursive: true });
+  await writeFile(join(release, "bin", "entry.js"), "export {};\n");
+  await symlink("entry.js", join(release, "bin", "entry-link.js"));
+  await run("seal", release, sha);
+  await expect(run("verify", release, sha)).resolves.toMatchObject({ stdout: "release_integrity_verified\n" });
+});
+
+it("rejects reused release content changed after sealing", async () => {
+  const release = join(root, "release");
+  await mkdir(release);
+  await writeFile(join(release, "app.js"), "original\n");
+  await run("seal", release, sha);
+  await writeFile(join(release, "app.js"), "tampered\n");
+  await expect(run("verify", release, sha)).rejects.toMatchObject({
+    stderr: expect.stringContaining("release_integrity_mismatch"),
+  });
+});
+
+it("rejects a release root symlink and an escaping content symlink", async () => {
+  const realRelease = join(root, "real-release");
+  const linkedRelease = join(root, "linked-release");
+  await mkdir(realRelease);
+  await writeFile(join(root, "outside"), "secret\n");
+  await symlink(realRelease, linkedRelease);
+  await expect(run("seal", linkedRelease, sha)).rejects.toMatchObject({
+    stderr: expect.stringContaining("release_path_invalid"),
+  });
+  await symlink("../outside", join(realRelease, "escape"));
+  await expect(run("seal", realRelease, sha)).rejects.toMatchObject({
+    stderr: expect.stringContaining("release_symlink_escape"),
+  });
+});
+
+function run(action: "seal" | "verify", release: string, expectedSha: string) {
+  return execFile("node", ["scripts/release-integrity.mjs", action, release, expectedSha], { cwd: process.cwd() });
+}
