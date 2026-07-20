@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import type { Pool } from "pg";
 
 export type WebOutput = Record<string, unknown> & { kind?: string };
