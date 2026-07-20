@@ -12,7 +12,7 @@ it("waits for the three distinct successful launchd parent stages", async () => 
 it("keeps the owner release transaction active across continuation until the parent commits", async () => {
   const parent = await readFile("scripts/run-post-merge-release.sh", "utf8");
   const continuation = await readFile("scripts/continue-post-merge-release.sh", "utf8");
-  expect(parent).toContain('node "$transaction_helper" begin "$release_transaction"');
+  expect(parent).toContain('"$node_path" "$transaction_helper" begin "$release_transaction"');
   expect(parent).toContain('ops/launchd/deploy-main.sh "$main_sha" "$live_env" "$release_transaction"');
   expect(parent).not.toMatch(/exec\s+"\$\{release\}\/scripts\/continue-post-merge-release\.sh/u);
   const childCall = parent.indexOf('"${release}/scripts/continue-post-merge-release.sh"');
@@ -57,6 +57,9 @@ describe("immutable release signal acceptance", () => {
 
   it("exercises representative Trending and potential Skill routes through Codex", async () => {
     const continuation = await readFile("scripts/continue-post-merge-release.sh", "utf8");
+    expect(continuation).toContain('resolve-codex-binary.mjs');
+    expect(continuation).toContain('run-codex-skill-smoke.sh');
+    expect(continuation).not.toContain('codex_binary="$(command -v codex)"');
     expect(continuation).toContain(
       "Use $ace-hunter to run ace-hunter trending weekly --format json. Return only the exact JSON tool result.",
     );
@@ -65,6 +68,16 @@ describe("immutable release signal acceptance", () => {
     );
     expect(continuation).toContain('>"${smoke_dir}/skill-weekly.json"');
     expect(continuation).toContain('>"${smoke_dir}/skill-potential.json"');
+  });
+
+  it("captures and semantically verifies list and observe Skill routes", async () => {
+    const continuation = await readFile("scripts/continue-post-merge-release.sh", "utf8");
+    expect(continuation).toContain('>"${smoke_dir}/direct-list.json"');
+    expect(continuation).toContain('>"${smoke_dir}/skill-list.json"');
+    expect(continuation).toContain('>"${smoke_dir}/skill-observe.json"');
+    expect(continuation).toContain("validate-codex-skill-output.js");
+    expect(continuation).toContain('"${smoke_dir}/direct-list.json" "${smoke_dir}/skill-list.json"');
+    expect(continuation).toContain('"${smoke_dir}/skill-observe.json"');
   });
 });
 
@@ -104,6 +117,13 @@ describe("post-merge database facts", () => {
     expect(acceptance).toContain("verifyAcceptedSignalOutput");
     expect(acceptance).toContain('expectedSmokeDir: join(dirname(runsPath), "release-rollback", "continuation-smoke")');
     expect(continuation).toContain('SIGNAL_SMOKE_DIR="$smoke_dir"');
+  });
+
+  it("binds the observed Skill result to a persisted realtime observation", async () => {
+    const acceptance = await readFile("scripts/post-merge-acceptance.ts", "utf8");
+    expect(acceptance).toContain('skill-observe.json');
+    expect(acceptance).toContain("verifyAcceptedSkillObservation");
+    expect(acceptance).toContain('process.env.ACE_E2E_REPOSITORY');
   });
 
   it("keeps production history read-only during fact verification", async () => {

@@ -56,6 +56,13 @@ describe("launchd X wrapper", () => {
     expect(await readFile(join(fixture.home, "proxy-seen"), "utf8")).toBe(proxy);
   });
 
+  it("recovers from a removed persisted Node path with the current Node 22", async () => {
+    const fixture = await makeFixture(false, undefined, true);
+    const result = await runWrapper(fixture.home);
+    expect(result.code).toBe(0);
+    expect((await readFile(fixture.nodeLog, "utf8")).trim().split("\n").length).toBeGreaterThan(0);
+  });
+
   it("treats an active same-wrapper PID as overlap and trap-cleans the owner's lock", async () => {
     const fixture = await makeFixture(true);
     const first = spawn("/bin/bash", [wrapper], { env: { ...process.env, HOME: fixture.home }, stdio: "ignore" });
@@ -69,7 +76,7 @@ describe("launchd X wrapper", () => {
   }, 10_000);
 });
 
-async function makeFixture(slowPreflight: boolean, proxy?: string) {
+async function makeFixture(slowPreflight: boolean, proxy?: string, stalePersistedNode = false) {
   const home = await mkdtemp(join(tmpdir(), "ace-hunter-launchd-"));
   temporary.push(home);
   const app = join(home, "Library/Application Support/AceHunter");
@@ -79,27 +86,30 @@ async function makeFixture(slowPreflight: boolean, proxy?: string) {
   await mkdir(join(release, "dist/scripts"), { recursive: true });
   await mkdir(join(release, "dist/src/cli"), { recursive: true });
   await mkdir(bin, { recursive: true });
+  await mkdir(join(release, "scripts"), { recursive: true });
+  await writeFile(join(release, "scripts", "resolve-node22.sh"), await readFile("scripts/resolve-node22.sh", "utf8"), { mode: 0o755 });
   const node = join(bin, "node");
   const keychain = join(bin, "keychain");
   const twitter = join(bin, "twitter");
-  await writeFile(node, `#!/bin/bash\ncase "$1" in *assert-twitter-preflight.js) printf '%s' "\${HTTPS_PROXY:-missing}" >"$HOME/proxy-seen"; ${slowPreflight ? "sleep 30" : ":"};; esac\nexit 0\n`);
+  const nodeLog = join(home, "node.log");
+  await writeFile(node, `#!/bin/bash\nif [[ "\${1:-}" = --version ]]; then printf 'v22.17.0\\n'; exit 0; fi\nprintf 'invoke\\n' >>"$HOME/node.log"\ncase "$1" in *assert-twitter-preflight.js) printf '%s' "\${HTTPS_PROXY:-missing}" >"$HOME/proxy-seen"; ${slowPreflight ? "sleep 30" : ":"};; esac\nexit 0\n`);
   await writeFile(keychain, "#!/bin/bash\nprintf value\n");
   await writeFile(twitter, "#!/bin/bash\nexit 0\n");
   await Promise.all([node, keychain, twitter].map((path) => chmod(path, 0o700)));
   await writeFile(join(app, "scheduler.conf"), [
-    `NODE_PATH=${quote(node)}`,
+    `NODE_PATH=${quote(stalePersistedNode ? join(bin, "removed-node") : node)}`,
     `TWITTER_CLI_PATH=${quote(twitter)}`,
     `KEYCHAIN_HELPER=${quote(keychain)}`,
     `RELEASE_ROOT=${quote(release)}`,
     ...(proxy === undefined ? [] : [`HTTPS_PROXY=${quote(proxy)}`]),
     "",
   ].join("\n"), { mode: 0o600 });
-  return { home, lock: join(app, "run/collect-x.lock") };
+  return { home, lock: join(app, "run/collect-x.lock"), nodeLog };
 }
 
 function runWrapper(home: string, stripProxy = false): Promise<{ code: number | null }> {
   return new Promise((resolvePromise, reject) => {
-    const env: NodeJS.ProcessEnv = { ...process.env, HOME: home };
+    const env: NodeJS.ProcessEnv = { ...process.env, HOME: home, PATH: `${join(home, "bin")}:${process.env.PATH}` };
     if (stripProxy) {
       for (const name of [
         "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "ALL_PROXY",

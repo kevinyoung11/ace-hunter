@@ -7,12 +7,13 @@ umask 077
 [[ "$SOURCE_ENV" = /* ]] || { printf 'source_env_must_be_absolute\n' >&2; exit 1; }
 
 repo_root="$(git rev-parse --show-toplevel)"
+node_path="$("${repo_root}/scripts/resolve-node22.sh")"
 old_worktree="$(pwd -P)"
 export ACCEPTANCE_STARTED_AT="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 pr_json="$(gh pr view --json number,state,headRefOid)"
-pr_number="$(node -e 'const x=JSON.parse(process.argv[1]);process.stdout.write(String(x.number))' "$pr_json")"
-pr_head="$(node -e 'const x=JSON.parse(process.argv[1]);if(!/^[a-f0-9]{40}$/.test(x.headRefOid))process.exit(1);process.stdout.write(x.headRefOid)' "$pr_json")"
-pr_state="$(node -e 'process.stdout.write(JSON.parse(process.argv[1]).state)' "$pr_json")"
+pr_number="$("$node_path" -e 'const x=JSON.parse(process.argv[1]);process.stdout.write(String(x.number))' "$pr_json")"
+pr_head="$("$node_path" -e 'const x=JSON.parse(process.argv[1]);if(!/^[a-f0-9]{40}$/.test(x.headRefOid))process.exit(1);process.stdout.write(x.headRefOid)' "$pr_json")"
+pr_state="$("$node_path" -e 'process.stdout.write(JSON.parse(process.argv[1]).state)' "$pr_json")"
 if [[ "$pr_state" = OPEN ]]; then gh pr merge "$pr_number" --merge --delete-branch=false; fi
 git fetch --quiet origin main
 main_sha="$(git rev-parse origin/main)"
@@ -21,7 +22,7 @@ git merge-base --is-ancestor "$pr_head" "$main_sha"
 app_dir="${HOME}/Library/Application Support/AceHunter"
 helper="${app_dir}/bin/keychain-secret"
 [[ -x "$helper" ]] || { printf 'keychain_helper_missing\n' >&2; exit 1; }
-live_env="$(node --import tsx scripts/prepare-live-env.ts --mode release --source "$SOURCE_ENV" --keychain-helper "$helper")"
+live_env="$("$node_path" --import tsx scripts/prepare-live-env.ts --mode release --source "$SOURCE_ENV" --keychain-helper "$helper")"
 live_env="$(realpath "$live_env")"
 live_dir="$(dirname "$live_env")"
 temp_base="${TMPDIR:-/tmp}"; temp_base="$(realpath "${temp_base%/}")"
@@ -42,13 +43,13 @@ cleanup() {
   local restore_failed=0
   if [[ "$transaction_started" -eq 1 ]]; then
     if [[ "$transaction_committed" -eq 1 ]]; then
-      if ! node "$transaction_helper" commit "$release_transaction" >/dev/null; then
+      if ! "$node_path" "$transaction_helper" commit "$release_transaction" >/dev/null; then
         transaction_committed=0
         restore_failed=1
-        node "$transaction_helper" rollback "$release_transaction" >/dev/null || restore_failed=1
+        "$node_path" "$transaction_helper" rollback "$release_transaction" >/dev/null || restore_failed=1
       fi
     else
-      node "$transaction_helper" rollback "$release_transaction" >/dev/null || restore_failed=1
+      "$node_path" "$transaction_helper" rollback "$release_transaction" >/dev/null || restore_failed=1
     fi
   fi
   if [[ "$transaction_committed" -eq 0 && "$snapshot_complete" -eq 1 ]]; then
@@ -81,26 +82,26 @@ for account in runtime-database-url github-token user-id deepseek-api-key; do
   fi
 done
 snapshot_complete=1
-node "$transaction_helper" begin "$release_transaction" "$app_dir" "${CODEX_HOME:-$HOME/.codex}" >/dev/null
+"$node_path" "$transaction_helper" begin "$release_transaction" "$app_dir" "${CODEX_HOME:-$HOME/.codex}" >/dev/null
 transaction_started=1
 
-node --import tsx scripts/pipe-env-value.ts "$live_env" ACE_HUNTER_RUNTIME_DATABASE_URL | "$helper" set runtime-database-url
-node --import tsx scripts/pipe-env-value.ts "$live_env" ACE_HUNTER_GITHUB_TOKEN | "$helper" set github-token
-node --import tsx scripts/pipe-env-value.ts "$live_env" ACE_HUNTER_USER_ID | "$helper" set user-id
-node --import tsx scripts/pipe-env-value.ts "$live_env" ACE_HUNTER_DEEPSEEK_API_KEY | "$helper" set deepseek-api-key
+"$node_path" --import tsx scripts/pipe-env-value.ts "$live_env" ACE_HUNTER_RUNTIME_DATABASE_URL | "$helper" set runtime-database-url
+"$node_path" --import tsx scripts/pipe-env-value.ts "$live_env" ACE_HUNTER_GITHUB_TOKEN | "$helper" set github-token
+"$node_path" --import tsx scripts/pipe-env-value.ts "$live_env" ACE_HUNTER_USER_ID | "$helper" set user-id
+"$node_path" --import tsx scripts/pipe-env-value.ts "$live_env" ACE_HUNTER_DEEPSEEK_API_KEY | "$helper" set deepseek-api-key
 
 gh api --method PUT "repos/${GH_REPO}/environments/ace-hunter-production" \
   --input - <<'JSON' >/dev/null
 {"wait_timer":0,"prevent_self_review":false,"reviewers":[],"deployment_branch_policy":{"protected_branches":false,"custom_branch_policies":true}}
 JSON
 policies="$(gh api "repos/${GH_REPO}/environments/ace-hunter-production/deployment-branch-policies" 2>/dev/null || printf '{"branch_policies":[]}')"
-node -e 'for(const p of JSON.parse(process.argv[1]).branch_policies??[])if(p.name!=="main")process.stdout.write(String(p.id)+"\n")' "$policies" |
+"$node_path" -e 'for(const p of JSON.parse(process.argv[1]).branch_policies??[])if(p.name!=="main")process.stdout.write(String(p.id)+"\n")' "$policies" |
   while IFS= read -r policy_id; do gh api --method DELETE "repos/${GH_REPO}/environments/ace-hunter-production/deployment-branch-policies/${policy_id}" >/dev/null; done
-if ! node -e 'process.exit((JSON.parse(process.argv[1]).branch_policies??[]).some(p=>p.name==="main")?0:1)' "$policies"; then
+if ! "$node_path" -e 'process.exit((JSON.parse(process.argv[1]).branch_policies??[]).some(p=>p.name==="main")?0:1)' "$policies"; then
   gh api --method POST "repos/${GH_REPO}/environments/ace-hunter-production/deployment-branch-policies" -f name=main -f type=branch >/dev/null
 fi
 for key in ACE_HUNTER_RUNTIME_DATABASE_URL ACE_HUNTER_GITHUB_TOKEN ACE_HUNTER_USER_ID ACE_HUNTER_DEEPSEEK_API_KEY; do
-  node --import tsx scripts/pipe-env-value.ts "$live_env" "$key" | gh secret set "$key" --repo "$GH_REPO" --env ace-hunter-production
+  "$node_path" --import tsx scripts/pipe-env-value.ts "$live_env" "$key" | gh secret set "$key" --repo "$GH_REPO" --env ace-hunter-production
 done
 actual_names="$(gh secret list --repo "$GH_REPO" --env ace-hunter-production --json name --jq 'map(.name)|sort|join(",")')"
 [[ "$actual_names" = 'ACE_HUNTER_DEEPSEEK_API_KEY,ACE_HUNTER_GITHUB_TOKEN,ACE_HUNTER_RUNTIME_DATABASE_URL,ACE_HUNTER_USER_ID' ]] || exit 1

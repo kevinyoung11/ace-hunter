@@ -7,6 +7,7 @@ import { Pool } from "pg";
 import { z } from "zod";
 import { loadRuntimeConfig } from "../src/config/load-config.js";
 import { verifyAcceptedCandidateSnapshots } from "./accepted-candidate-provenance.js";
+import { verifyAcceptedSkillObservation } from "./accepted-skill-observation.js";
 import { verifyAcceptedSignalOutput } from "./accepted-trending-output.js";
 
 const execFile = promisify(execFileCallback);
@@ -98,6 +99,10 @@ try {
     batches: completeTrending.rows.map((row) => ({
       period: row.period, capturedAt: row.captured_at, jobRunId: row.job_run_id,
     })),
+  });
+  await verifyAcceptedSkillObservation({
+    pool, artifactPath: join(smokeDir, "skill-observe.json"),
+    expectedRepository: process.env.ACE_E2E_REPOSITORY ?? "", startedAt,
   });
   const outputs = await pool.query<{ output_type: string }>(`select output_type from ace_hunter.analysis_outputs
     where (output_type='daily_report' and completed_at >= $1)
