@@ -4,12 +4,16 @@ import { Command, CommanderError } from "commander";
 import type { JobInput } from "../jobs/job-runner.js";
 import { loadRedactionRegistry } from "../config/load-config.js";
 import { log } from "../core/logger.js";
+import type { PotentialRule } from "../reports/potential-list.js";
+import type { TrendingListPeriod } from "../reports/trending-list.js";
 import { registerAnalyzeCommand } from "./commands/analyze.js";
 import { registerFollowCommands } from "./commands/follow.js";
 import { registerJobCommand } from "./commands/jobs.js";
 import { registerMonitorsCommand } from "./commands/monitors.js";
 import { registerObserveCommand } from "./commands/observe.js";
+import { registerPotentialCommand } from "./commands/potential.js";
 import { registerTodayCommand } from "./commands/today.js";
+import { registerTrendingCommand } from "./commands/trending.js";
 import { processIo, type CliIo, type CommandOutput } from "./output.js";
 import { createLazyProductionCliRuntime } from "./runtime-dependencies.js";
 
@@ -17,6 +21,8 @@ export type { CliExitCode } from "./output.js";
 
 export interface CliDependencies {
   today(): Promise<CommandOutput>;
+  potential(options: { rule: PotentialRule; limit: number | null }): Promise<CommandOutput>;
+  trending(options: { period: TrendingListPeriod; limit: number | null }): Promise<CommandOutput>;
   analyze(target: string): Promise<CommandOutput>;
   observe(target: string): Promise<CommandOutput>;
   follow(target: string): Promise<CommandOutput>;
@@ -35,6 +41,8 @@ export function createProgram(dependencies: CliDependencies): Command {
     .exitOverride();
 
   registerTodayCommand(program, dependencies);
+  registerPotentialCommand(program, dependencies);
+  registerTrendingCommand(program, dependencies);
   registerAnalyzeCommand(program, dependencies);
   registerObserveCommand(program, dependencies);
   registerFollowCommands(program, dependencies);
@@ -52,6 +60,8 @@ function unavailable(): Promise<never> {
 export function unavailableDependencies(io: CliIo = processIo): CliDependencies {
   return {
     today: unavailable,
+    potential: unavailable,
+    trending: unavailable,
     analyze: unavailable,
     observe: unavailable,
     follow: unavailable,

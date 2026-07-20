@@ -11,6 +11,16 @@ function harness(overrides: Partial<CliDependencies> = {}) {
   const exits: CliExitCode[] = [];
   const dependencies: CliDependencies = {
     today: vi.fn(async () => ({ renderedMarkdown: "# Today\n", structuredContent: { z: 1, a: 2 } })),
+    potential: vi.fn(async (options) => ({
+      kind: "potential_repositories",
+      renderedMarkdown: "# Potential\n",
+      structuredContent: { kind: "potential_repositories", options },
+    })),
+    trending: vi.fn(async (options) => ({
+      kind: "trending_lists",
+      renderedMarkdown: "# Trending\n",
+      structuredContent: { kind: "trending_lists", options },
+    })),
     analyze: vi.fn(async (target) => ({ kind: "found", target, renderedMarkdown: `# ${target}\n`, structuredContent: { target } })),
     observe: vi.fn(async (target) => ({ kind: "found", target, status: "partial", missingSources: ["x"] })),
     follow: vi.fn(async (target) => ({ kind: "followed", target })),
@@ -51,6 +61,51 @@ it("registers every Skill command and renders deterministic Markdown or JSON", a
     expect(result.exits).toEqual([]);
     expect(result.stdout).toHaveLength(1);
   }
+});
+
+it("registers potential and trending with stable defaults and output formats", async () => {
+  const potential = await invoke(["potential"]);
+  expect(potential.stdout).toEqual(["# Potential\n"]);
+  expect(potential.dependencies.potential).toHaveBeenCalledWith({ rule: "all", limit: 20 });
+
+  const trending = await invoke(["trending", "daily", "--format", "json"]);
+  expect(trending.dependencies.trending).toHaveBeenCalledWith({ period: "daily", limit: 20 });
+  expect(trending.stdout).toEqual([
+    "{\n  \"kind\": \"trending_lists\",\n  \"options\": {\n    \"limit\": 20,\n    \"period\": \"daily\"\n  }\n}\n",
+  ]);
+});
+
+it("accepts exact signal filters and strict limits", async () => {
+  const potential = await invoke(["potential", "--rule", "1d", "--limit", "1", "--format", "json"]);
+  expect(potential.dependencies.potential).toHaveBeenCalledWith({ rule: "1d", limit: 1 });
+
+  const unlimited = await invoke(["potential", "--limit", "all"]);
+  expect(unlimited.dependencies.potential).toHaveBeenCalledWith({ rule: "all", limit: null });
+
+  const trending = await invoke(["trending", "all", "--limit", "1000"]);
+  expect(trending.dependencies.trending).toHaveBeenCalledWith({ period: "all", limit: 1000 });
+});
+
+it.each([
+  ["zero", ["potential", "--limit", "0"]],
+  ["over maximum", ["potential", "--limit", "1001"]],
+  ["decimal", ["potential", "--limit", "1.5"]],
+  ["empty", ["potential", "--limit", ""]],
+  ["explicit plus", ["potential", "--limit", "+1"]],
+  ["leading whitespace", ["potential", "--limit", " 1"]],
+  ["trailing whitespace", ["trending", "daily", "--limit", "1 "]],
+  ["leading zero", ["trending", "daily", "--limit", "01"]],
+  ["invalid rule", ["potential", "--rule", "7d"]],
+  ["invalid period", ["trending", "yearly"]],
+  ["invalid potential format", ["potential", "--format", "yaml"]],
+  ["invalid trending format", ["trending", "daily", "--format", "yaml"]],
+])("rejects %s before invoking a signal dependency", async (_name, args) => {
+  const value = harness();
+  await expect(value.program.parseAsync(["node", "ace-hunter", ...args])).rejects.toMatchObject({
+    code: "validation_error",
+  });
+  expect(value.dependencies.potential).not.toHaveBeenCalled();
+  expect(value.dependencies.trending).not.toHaveBeenCalled();
 });
 
 it("returns ambiguity as stable JSON with exit 2 and treats a partial observation as success", async () => {

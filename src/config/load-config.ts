@@ -4,6 +4,7 @@ import {
   adminEnvSchema,
   loadConfigShape,
   migrationEnvSchema,
+  readonlyRuntimeEnvSchema,
   runtimeEnvSchema,
 } from "./schema.js";
 
@@ -75,6 +76,16 @@ export function loadRuntimeConfig(
     throw new Error(`Invalid configuration keys: ${keys}`);
   }
   return loadConfigShape(parsed.data);
+}
+
+export function loadReadonlyRuntimeConfig(
+  env: NodeJS.ProcessEnv | Record<string, string | undefined>,
+) {
+  const parsed = readonlyRuntimeEnvSchema.safeParse(mergedEnv(env));
+  if (!parsed.success) {
+    throw new Error("Invalid configuration keys: ACE_HUNTER_RUNTIME_DATABASE_URL");
+  }
+  return { runtimeDatabaseUrl: parsed.data.ACE_HUNTER_RUNTIME_DATABASE_URL };
 }
 
 export function loadRedactionRegistry(env: NodeJS.ProcessEnv): string[] {

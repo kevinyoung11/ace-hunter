@@ -4,7 +4,7 @@ import { accessSync, constants, realpathSync } from "node:fs";
 import { delimiter, isAbsolute, join } from "node:path";
 import type { Pool } from "pg";
 import { Pool as PgPool } from "pg";
-import { loadRuntimeConfig } from "../config/load-config.js";
+import { loadReadonlyRuntimeConfig, loadRuntimeConfig } from "../config/load-config.js";
 import { loadedSecretValues } from "../config/schema.js";
 import { createHttpTransport } from "../core/http-transport.js";
 import { AnalysisOutputStore } from "../db/stores/analysis-output-store.js";
@@ -24,6 +24,16 @@ import {
 import { resolveProduct, type ProductResolution, type ResolverStore } from "../products/resolve-product.js";
 import { buildProductReport } from "../reports/product-report.js";
 import { renderProductReport } from "../reports/markdown-renderer.js";
+import {
+  loadPotentialRepositories,
+  renderPotentialList,
+  type PotentialListOptions,
+} from "../reports/potential-list.js";
+import {
+  loadTrendingLists,
+  renderTrendingLists,
+  type TrendingListOptions,
+} from "../reports/trending-list.js";
 import type { JobInput } from "../jobs/job-runner.js";
 import { GitHubHttpClientFactory } from "../sources/github/github-http-client.js";
 import { TwitterCliSource } from "../sources/x/twitter-cli-source.js";
@@ -43,6 +53,12 @@ export interface DatabaseCliOptions {
   runJob?: (input: JobInput) => Promise<CommandOutput>;
 }
 
+export interface ReadonlySignalCliOptions {
+  pool: Pool;
+  io?: CliIo;
+  now?: () => Date;
+}
+
 export interface CliRuntime {
   dependencies: CliDependencies;
   close(): Promise<void>;
@@ -52,28 +68,68 @@ export function createLazyProductionCliRuntime(
   env: NodeJS.ProcessEnv,
   io: CliIo = processIo,
 ): CliRuntime {
-  let runtime: Promise<CliRuntime> | undefined;
-  const get = () => runtime ??= createProductionCliRuntime(env, io);
+  let fullRuntime: Promise<CliRuntime> | undefined;
+  let readonlyRuntime: Promise<CliRuntime> | undefined;
+  const getFull = () => fullRuntime ??= createProductionCliRuntime(env, io);
+  const getReadonly = () => readonlyRuntime ??= createReadonlyProductionCliRuntime(env, io);
   return {
     dependencies: {
       io,
       now: () => new Date(),
-      today: async () => (await get()).dependencies.today(),
-      analyze: async (target) => (await get()).dependencies.analyze(target),
-      observe: async (target) => (await get()).dependencies.observe(target),
-      follow: async (target) => (await get()).dependencies.follow(target),
-      listMonitors: async () => (await get()).dependencies.listMonitors(),
-      unfollow: async (target) => (await get()).dependencies.unfollow(target),
-      runJob: async (input) => (await get()).dependencies.runJob(input),
+      potential: async (options) => (await getReadonly()).dependencies.potential(options),
+      trending: async (options) => (await getReadonly()).dependencies.trending(options),
+      today: async () => (await getFull()).dependencies.today(),
+      analyze: async (target) => (await getFull()).dependencies.analyze(target),
+      observe: async (target) => (await getFull()).dependencies.observe(target),
+      follow: async (target) => (await getFull()).dependencies.follow(target),
+      listMonitors: async () => (await getFull()).dependencies.listMonitors(),
+      unfollow: async (target) => (await getFull()).dependencies.unfollow(target),
+      runJob: async (input) => (await getFull()).dependencies.runJob(input),
     },
     close: async () => {
-      if (!runtime) return;
-      try {
-        await (await runtime).close();
-      } catch {
-        // Command execution already emitted a redacted configuration error.
-      }
+      const runtimes = [fullRuntime, readonlyRuntime].filter(
+        (runtime): runtime is Promise<CliRuntime> => runtime !== undefined,
+      );
+      await Promise.all(runtimes.map(async (runtime) => {
+        try {
+          await (await runtime).close();
+        } catch {
+          // Command execution already emitted a redacted configuration error.
+        }
+      }));
     },
+  };
+}
+
+async function createReadonlyProductionCliRuntime(
+  env: NodeJS.ProcessEnv,
+  io: CliIo,
+): Promise<CliRuntime> {
+  const config = loadReadonlyRuntimeConfig(env);
+  const pool = new PgPool({ connectionString: config.runtimeDatabaseUrl, max: 2 });
+  try {
+    await pool.query("select 1");
+  } catch (error) {
+    await pool.end();
+    throw error;
+  }
+  const signals = createReadonlySignalCliDependencies({ pool, io });
+  const unavailable = async (): Promise<never> => { throw codedError("configuration_error"); };
+  return {
+    dependencies: {
+      io,
+      now: () => new Date(),
+      potential: signals.potential,
+      trending: signals.trending,
+      today: unavailable,
+      analyze: unavailable,
+      observe: unavailable,
+      follow: unavailable,
+      listMonitors: unavailable,
+      unfollow: unavailable,
+      runJob: unavailable,
+    },
+    close: async () => pool.end(),
   };
 }
 
@@ -267,6 +323,7 @@ function createManagedTwitterSource(command: string, pathValue: string | undefin
 
 export function createDatabaseCliDependencies(options: DatabaseCliOptions): CliDependencies {
   const now = options.now ?? (() => new Date());
+  const signals = createReadonlySignalCliDependencies({ pool: options.pool, io: options.io, now });
   const store = resolverStore(options.pool);
   const resolve = (target: string) => resolveProduct(store, target, {
     createFromGithub: options.createProductFromGithub,
@@ -274,6 +331,8 @@ export function createDatabaseCliDependencies(options: DatabaseCliOptions): CliD
   return {
     io: options.io ?? processIo,
     now,
+    potential: signals.potential,
+    trending: signals.trending,
     today: async () => today(options.pool),
     analyze: async (target) => analyzeResolved(options.pool, await resolve(target), now(), options.userId),
     observe: async (target) => {
@@ -286,6 +345,37 @@ export function createDatabaseCliDependencies(options: DatabaseCliOptions): CliD
     listMonitors: async () => listMonitors(options.pool, options.userId),
     unfollow: async (target) => monitorResolved(options, await resolve(target), false, now()),
     runJob: options.runJob ?? (async () => { throw codedError("configuration_error"); }),
+  };
+}
+
+export function createReadonlySignalCliDependencies(options: ReadonlySignalCliOptions): Pick<
+  CliDependencies,
+  "io" | "now" | "potential" | "trending"
+> {
+  const now = options.now ?? (() => new Date());
+  return {
+    io: options.io ?? processIo,
+    now,
+    potential: async (input) => potential(options.pool, { ...input, now: now() }),
+    trending: async (input) => trending(options.pool, { ...input, now: now() }),
+  };
+}
+
+async function potential(pool: Pool, options: PotentialListOptions): Promise<CommandOutput> {
+  const value = await loadPotentialRepositories(pool, options);
+  return {
+    kind: value.kind,
+    structuredContent: value,
+    renderedMarkdown: renderPotentialList(value),
+  };
+}
+
+async function trending(pool: Pool, options: TrendingListOptions): Promise<CommandOutput> {
+  const value = await loadTrendingLists(pool, options);
+  return {
+    kind: value.kind,
+    structuredContent: value,
+    renderedMarkdown: renderTrendingLists(value),
   };
 }
 

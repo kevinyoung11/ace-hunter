@@ -2,7 +2,11 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { loadMigrationConfig, loadRuntimeConfig } from "../../../src/config/load-config.js";
+import {
+  loadMigrationConfig,
+  loadReadonlyRuntimeConfig,
+  loadRuntimeConfig,
+} from "../../../src/config/load-config.js";
 
 const valid = {
   ACE_HUNTER_MIGRATION_DATABASE_URL: "postgres://admin:secret@localhost:5432/ace_test",
@@ -37,6 +41,13 @@ describe("loadConfig", () => {
       loadRuntimeConfig({ ...valid, ACE_HUNTER_RUNTIME_DATABASE_URL: undefined }),
     ).not.toThrow(/github-secret/);
     expect(() => loadMigrationConfig(valid)).not.toThrow();
+  });
+
+  it("loads read-only commands with only the runtime database URL", () => {
+    expect(loadReadonlyRuntimeConfig({
+      ACE_HUNTER_RUNTIME_DATABASE_URL: valid.ACE_HUNTER_RUNTIME_DATABASE_URL,
+    })).toEqual({ runtimeDatabaseUrl: valid.ACE_HUNTER_RUNTIME_DATABASE_URL });
+    expect(() => loadReadonlyRuntimeConfig({})).toThrow(/ACE_HUNTER_RUNTIME_DATABASE_URL/);
   });
 
   it("loads a strict dotenv file while defined process values take precedence", () => {
