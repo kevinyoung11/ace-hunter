@@ -19,11 +19,6 @@ cleanup_trusted() {
   fi
   return 0
 }
-git fetch --quiet origin main
-remote_main="$(git rev-parse origin/main)"
-[[ "$main_sha" = "$remote_main" ]] || { printf 'sha_not_remote_main\n' >&2; exit 1; }
-git cat-file -e "${main_sha}^{commit}"
-
 node_path="$("${repo_root}/scripts/resolve-node22.sh")"
 "$node_path" "$transaction_helper" verify "$transaction" >/dev/null
 rollback_exit() {
@@ -37,6 +32,11 @@ trap 'rollback_exit $?' ERR
 trap 'rollback_exit 129' HUP
 trap 'rollback_exit 130' INT
 trap 'rollback_exit 143' TERM
+
+git fetch --quiet origin main
+remote_main="$(git rev-parse origin/main)"
+[[ "$main_sha" = "$remote_main" ]] || { printf 'sha_not_remote_main\n' >&2; exit 1; }
+git cat-file -e "${main_sha}^{commit}"
 
 app_dir="${HOME}/Library/Application Support/AceHunter"
 releases_dir="${app_dir}/releases"
