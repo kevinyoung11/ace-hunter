@@ -9,4 +9,23 @@ Set these Vercel environment variables for Preview and Production:
 
 Add `https://<deployment-domain>/auth/callback` to Supabase Auth redirect URLs. Do not commit the source `.env.local`, Keychain values, service-role key, database administrator URL, GitHub token, or Twitter credentials.
 
-The console supports only latest daily report, stored-fact analysis, and monitor management. Real-time observation remains on the local Mac worker.
+## Routes and real-data boundaries
+
+- `/` is the public Skill-first research homepage. Its Daily/Weekly/Monthly GitHub ranking board reads persisted snapshots only; it never invents fallback repositories.
+- `/console` is the existing single-user report, analysis, and monitor console.
+- `GET /api/trending?period=daily|weekly|monthly` returns the latest captured ranking for that period. A missing capture is a safe `404` `trending_unavailable` response, not mock data.
+- `GET /api/today` returns the latest persisted daily report. Real-time collection and database writes remain on the local Mac worker.
+
+## Production verification
+
+After a production deployment, verify the public alias with no credentials:
+
+```bash
+curl -fsS https://<production-domain>/
+curl -fsS 'https://<production-domain>/api/today'
+curl -fsS 'https://<production-domain>/api/trending?period=daily'
+curl -fsS 'https://<production-domain>/api/trending?period=weekly'
+curl -fsS 'https://<production-domain>/api/trending?period=monthly'
+```
+
+All five requests must return `200`. The three trending payloads must have `kind: "trending"`, the requested `period`, and the captured repository records. Check `/` at 1440 px, 768 px, and 390 px: the ranking remains factual and the tabs stay operable with keyboard arrows.

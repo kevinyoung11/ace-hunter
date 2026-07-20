@@ -1,5 +1,5 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
+/* eslint-disable @typescript-eslint/no-explicit-any */
 
 export function ReportItem({ item, rank }: { item: any; rank: number }) {
   const stars = item.githubFacts?.stars;

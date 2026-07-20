@@ -1,5 +1,5 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { useState } from "react";
 import { ReportItem } from "./report-item";
 import { StatusBadge } from "./status-badge";

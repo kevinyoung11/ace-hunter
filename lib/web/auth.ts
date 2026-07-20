@@ -1,6 +1,6 @@
 import { timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
-import { loadWebConfig } from "./environment";
+import { readWebConfig } from "./environment";
 import { createSupabaseServerClient } from "./supabase-server";
 
 export class WebAuthError extends Error {
@@ -19,7 +19,7 @@ export async function requireOwner(): Promise<void> {
   const client = await createSupabaseServerClient();
   const { data: { user } } = await client.auth.getUser();
   if (!user) throw new WebAuthError("unauthenticated");
-  if (!sameUser(user.id, loadWebConfig(process.env).ownerUserId)) throw new WebAuthError("forbidden");
+  if (!sameUser(user.id, readWebConfig().ownerUserId)) throw new WebAuthError("forbidden");
 }
 
 export function authErrorResponse(error: unknown): NextResponse | null {
