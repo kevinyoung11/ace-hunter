@@ -263,3 +263,4 @@ begin
  return result;
 end $$;
 grant execute on function ace_hunter.set_job_enabled(text,boolean,text), ace_hunter.retry_job_command(uuid,text) to ace_hunter_ops;
+revoke all on function ace_hunter.set_job_enabled(text,boolean,text), ace_hunter.retry_job_command(uuid,text) from public;
