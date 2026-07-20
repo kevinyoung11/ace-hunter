@@ -124,8 +124,9 @@ export async function migrateWithRestrictedAdmin(pool: Pool, options: MigrationO
   const client = await pool.connect();
   try {
     await client.query("select pg_advisory_lock(hashtext('ace_hunter:migrate'))");
-    await applyMigrations(client, migrations, async (sql) => {
-      await client.query(`do $ace_admin_membership$ begin execute format('grant ace_hunter_owner to %I',current_user); end $ace_admin_membership$`);
+    await client.query(`do $ace_admin_membership$ begin execute format('grant ace_hunter_owner to %I',current_user); end $ace_admin_membership$`);
+    try {
+      await applyMigrations(client, migrations, async (sql) => {
       const authConstraints = [
         "  constraint user_product_monitors_user_id_fkey foreign key (user_id)\n    references auth.users(id) on delete cascade,\n",
         "  constraint analysis_outputs_user_id_fkey foreign key (user_id)\n    references auth.users(id) on delete set null,\n",
@@ -140,8 +141,10 @@ export async function migrateWithRestrictedAdmin(pool: Pool, options: MigrationO
       await client.query("reset role");
       await client.query("alter table ace_hunter.user_product_monitors add constraint user_product_monitors_user_id_fkey foreign key(user_id) references auth.users(id) on delete cascade");
       await client.query("alter table ace_hunter.analysis_outputs add constraint analysis_outputs_user_id_fkey foreign key(user_id) references auth.users(id) on delete set null");
-      await client.query(`do $ace_admin_membership$ begin execute format('revoke ace_hunter_owner from %I',current_user); end $ace_admin_membership$`);
-    });
+      });
+    } finally {
+      await client.query(`do $ace_admin_membership$ begin execute format('revoke ace_hunter_owner from %I',current_user); end $ace_admin_membership$`).catch(() => undefined);
+    }
   } finally {
     await client.query("select pg_advisory_unlock(hashtext('ace_hunter:migrate'))").catch(() => undefined);
     client.release();
