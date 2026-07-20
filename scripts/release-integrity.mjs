@@ -5,10 +5,13 @@ import {
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import process from "node:process";
 
-const [action, releaseArg, expectedSha, trustedDigest] = process.argv.slice(2);
+const args = process.argv.slice(2);
+const [action, releaseArg, expectedSha, trustedDigest] = args;
 const manifestName = "release-manifest.json";
 
 try {
+  const expectedArgCount = action === "digest" ? 2 : action === "seal" ? 3 : action === "verify" ? 4 : -1;
+  if (args.length !== expectedArgCount) throw new Error("release_integrity_usage_error");
   if (!(["seal", "verify", "digest"].includes(action)) || !isAbsolute(releaseArg ?? "") ||
       (action !== "digest" && !/^[a-f0-9]{40}$/u.test(expectedSha ?? "")) ||
       (action === "verify" && !/^[a-f0-9]{64}$/u.test(trustedDigest ?? ""))) {

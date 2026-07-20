@@ -64,6 +64,20 @@ it("rejects a release root symlink and an escaping content symlink", async () =>
   });
 });
 
+it("enforces the exact argument contract for every integrity action", async () => {
+  const release = join(root, "release");
+  await mkdir(release);
+  const digest = "c".repeat(64);
+  await expect(execFile("node", ["scripts/release-integrity.mjs", "digest", release, "extra"], { cwd: process.cwd() }))
+    .rejects.toMatchObject({ stderr: expect.stringContaining("release_integrity_usage_error") });
+  await expect(execFile("node", ["scripts/release-integrity.mjs", "seal", release, sha, "extra"], { cwd: process.cwd() }))
+    .rejects.toMatchObject({ stderr: expect.stringContaining("release_integrity_usage_error") });
+  await expect(execFile("node", ["scripts/release-integrity.mjs", "verify", release, sha], { cwd: process.cwd() }))
+    .rejects.toMatchObject({ stderr: expect.stringContaining("release_integrity_usage_error") });
+  await expect(execFile("node", ["scripts/release-integrity.mjs", "verify", release, sha, digest, "extra"], { cwd: process.cwd() }))
+    .rejects.toMatchObject({ stderr: expect.stringContaining("release_integrity_usage_error") });
+});
+
 function run(action: "seal" | "verify", release: string, expectedSha: string, trusted?: string) {
   return execFile("node", ["scripts/release-integrity.mjs", action, release, expectedSha, ...(trusted ? [trusted] : [])], { cwd: process.cwd() });
 }

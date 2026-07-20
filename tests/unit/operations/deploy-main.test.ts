@@ -1,5 +1,5 @@
 import { execFile as execFileCallback } from "node:child_process";
-import { chmod, cp, mkdir, mkdtemp, readFile, readlink, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, cp, mkdir, mkdtemp, readdir, readFile, readlink, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -162,6 +162,7 @@ esac
       expect(await readlink(join(app, "current"))).toBe(prior);
       expect(await readFile(wrapper, "utf8")).toBe(priorWrapper);
       expect(await readlink(skillLink)).toBe(join(prior, "skills", "ace-hunter"));
+      expect((await readdir(releases)).filter((entry) => entry.startsWith(".trusted-")).length).toBe(0);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

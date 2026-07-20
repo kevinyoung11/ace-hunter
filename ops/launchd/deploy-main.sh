@@ -21,6 +21,7 @@ node_path="$("${repo_root}/scripts/resolve-node22.sh")"
 rollback_exit() {
   local status="$1"
   trap - ERR HUP INT TERM
+  cleanup_trusted
   "$node_path" "$transaction_helper" rollback "$transaction" >/dev/null || status=1
   exit "$status"
 }
@@ -36,10 +37,15 @@ case "$candidate" in *'.config/superpowers/worktrees'*) printf 'worktree_release
 mkdir -p "$releases_dir" "${app_dir}/bin"
 chmod 700 "$app_dir" "$releases_dir" "${app_dir}/bin"
 candidate_tmp="${releases_dir}/.trusted-${main_sha}.$$"
+cleanup_trusted() {
+  [[ -n "${candidate_tmp:-}" && -e "$candidate_tmp" ]] && rm -rf -- "$candidate_tmp"
+}
+trap cleanup_trusted EXIT
 mkdir "$candidate_tmp"
 git archive "$main_sha" | tar -x -C "$candidate_tmp"
 node_bin_dir="$(dirname "$node_path")"
 npm_cli="$(realpath "${node_bin_dir}/npm" 2>/dev/null)" || { printf 'node22_npm_not_found\n' >&2; exit 1; }
+[[ -f "$npm_cli" ]] || { printf 'node22_npm_not_found\n' >&2; exit 1; }
 (
   cd "$candidate_tmp"
   PATH="${node_bin_dir}:$PATH" "$node_path" "$npm_cli" ci
