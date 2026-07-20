@@ -11,5 +11,5 @@ export class JobCommandStore {
     const r=await this.db.query<Row>(`insert into ace_hunter.job_commands(job_name,executor,capability,parameters,idempotency_key,scheduled_for) values($1,$2,$3,$4::jsonb,$5,$6) on conflict(idempotency_key) do update set idempotency_key=excluded.idempotency_key returning ${cols}`,[input.jobName,input.executor,input.capability,JSON.stringify(input.parameters),input.idempotencyKey,input.scheduledFor??null]);
     return map(r.rows[0]);
   }
-  public async call(fn:string,args:unknown[]):Promise<JobCommand|null>{ const r=await this.db.query<Row>(`select * from ace_hunter.${fn}(${args.map((_,i)=>`$${i+1}`).join(",")})`,args); return r.rows[0]?map(r.rows[0]):null; }
+  public async call(fn:string,args:unknown[]):Promise<JobCommand|null>{ const allowed=new Set(["claim_job_command","start_job_command","bind_job_run","complete_job_command","cancel_job_command","requeue_job_command"]); if(!allowed.has(fn)) throw new Error("unsupported_command_function"); const r=await this.db.query<Row>(`select * from ace_hunter.${fn}(${args.map((_,i)=>`$${i+1}`).join(",")})`,args); return r.rows[0]?map(r.rows[0]):null; }
 }

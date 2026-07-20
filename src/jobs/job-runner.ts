@@ -25,6 +25,7 @@ export interface JobInput {
   parameters: Record<string, unknown>;
   parentRunId?: string;
   dataCutoffAt?: Date;
+  commandId?: string;
 }
 
 export interface JobContext {

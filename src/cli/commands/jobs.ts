@@ -85,6 +85,7 @@ export function registerJobCommand(program: Command, dependencies: CliDependenci
             triggerType: Object.keys(attribution).length > 0 ? "schedule" : "manual",
             scheduledFor,
             parameters,
+            commandId: options.commandId?.toLowerCase(),
           };
         } catch {
           throw Object.assign(new Error("invalid job attribution"), { code: "invalid_job_attribution" });
