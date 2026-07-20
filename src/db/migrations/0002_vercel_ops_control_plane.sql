@@ -179,6 +179,8 @@ begin
    lease_until=now()+interval '5 minutes', updated_at=now()
   where c.id=p_command_id and c.status='queued' and c.executor=p_executor
     and c.capability = any(p_capabilities)
+    and exists (select 1 from ace_hunter.job_definitions j
+                where j.name=c.job_name and j.enabled and j.paused_at is null)
   returning * into result;
  return result;
 end $$;
