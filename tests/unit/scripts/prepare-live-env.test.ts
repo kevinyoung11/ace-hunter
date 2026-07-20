@@ -185,4 +185,12 @@ describe("prepare-live-env safety helpers", () => {
     expect(source).toContain("setPair(oldMigration, oldRuntime)");
     expect(source).toContain("await rename(restorePath, options.runtimeEnvPath)");
   });
+
+  it("uses independent compensation for exported recovery precondition failures", async () => {
+    const source = await readFile("scripts/prepare-live-env.ts", "utf8");
+    expect(source).toContain("const compensationFailures: unknown[] = []");
+    expect(source).toContain("const attempt = async");
+    expect(source).toContain("let mutationStarted = false");
+    expect(source).toContain("if (mutationStarted || temporary)");
+  });
 });

@@ -167,17 +167,15 @@ export async function recoverFixedRoleCredentials(options: {
     await options.keychain.setPair(options.migrationUrl, options.runtimeUrl);
     return { migrationUrl: options.migrationUrl, runtimeUrl: options.runtimeUrl };
   } catch (error) {
-    try {
-      if (oldMigration && oldRuntime) {
-        await setFixedRolePassword(options.admin, "ace_hunter_migrator", new URL(oldMigration).password);
-        await setFixedRolePassword(options.admin, "ace_hunter_runtime", new URL(oldRuntime).password);
-        await (options.verify ?? verifyRuntimeCredential)(oldMigration);
-        await (options.verify ?? verifyRuntimeCredential)(oldRuntime);
-        if (options.keychain.setPair) await options.keychain.setPair(oldMigration, oldRuntime);
-      }
-    } catch {
-      throw new Error("modified_requires_manual_recovery");
-    }
+    const compensationFailures: unknown[] = [];
+    const attempt = async (operation: () => Promise<void>) => { try { await operation(); } catch (restoreError) { compensationFailures.push(restoreError); } };
+    const setPair = options.keychain.setPair;
+    if (oldMigration) await attempt(() => setFixedRolePassword(options.admin, "ace_hunter_migrator", new URL(oldMigration).password));
+    if (oldRuntime) await attempt(() => setFixedRolePassword(options.admin, "ace_hunter_runtime", new URL(oldRuntime).password));
+    if (oldMigration && oldRuntime && setPair) await attempt(() => setPair(oldMigration, oldRuntime));
+    if (oldMigration) await attempt(() => (options.verify ?? verifyRuntimeCredential)(oldMigration));
+    if (oldRuntime) await attempt(() => (options.verify ?? verifyRuntimeCredential)(oldRuntime));
+    if (compensationFailures.length > 0) throw new Error("modified_requires_manual_recovery");
     if (error instanceof Error && error.message === "database_credential_recovery_required") throw error;
     throw new Error("database_credential_recovery_required");
   }
@@ -365,11 +363,13 @@ async function recoverFromAdmin(options: { admin: Queryable; adminUrl: string; s
   if (oldRuntimeEnv && (!oldRuntimeEnv.isFile() || oldRuntimeEnv.isSymbolicLink() || oldRuntimeEnv.uid !== process.getuid?.() || (oldRuntimeEnv.mode & 0o077) !== 0)) throw new Error("runtime_environment_permissions_invalid");
   const oldRuntimeEnvContents = oldRuntimeEnv ? await readFile(options.runtimeEnvPath) : null;
   let temporary: string | undefined;
+  let mutationStarted = false;
   try {
     if (!options.store.setPair || !oldMigration || !oldRuntime) throw new Error("atomic_credential_store_required");
     const generate = () => randomBytes(32).toString("base64url");
     const migrationUrl = buildRoleUrl(options.adminUrl, "ace_hunter_migrator", generate());
     const runtimeUrl = buildRoleUrl(options.adminUrl, "ace_hunter_runtime", generate());
+    mutationStarted = true;
     await setFixedRolePassword(options.admin, "ace_hunter_migrator", new URL(migrationUrl).password);
     await setFixedRolePassword(options.admin, "ace_hunter_runtime", new URL(runtimeUrl).password);
     await verifyRuntimeCredential(migrationUrl);
@@ -397,10 +397,12 @@ async function recoverFromAdmin(options: { admin: Queryable; adminUrl: string; s
       if (oldMigration && oldRuntime && setPair) await attempt(() => setPair(oldMigration, oldRuntime));
       if (oldMigration) await attempt(() => verifyRuntimeCredential(oldMigration));
       if (oldRuntime) await attempt(() => verifyRuntimeCredential(oldRuntime));
-      if (oldRuntimeEnvContents) {
+      if (mutationStarted || temporary) {
+       if (oldRuntimeEnvContents) {
         const restorePath = `${options.runtimeEnvPath}.restore.${process.pid}`;
         await attempt(async () => { await writeFile(restorePath, oldRuntimeEnvContents, { mode: 0o600, flag: "wx" }); await rename(restorePath, options.runtimeEnvPath); });
-      } else await attempt(() => rm(options.runtimeEnvPath, { force: true }));
+       } else await attempt(() => rm(options.runtimeEnvPath, { force: true }));
+      }
       if (compensationFailures.length > 0) throw new Error("modified_requires_manual_recovery");
     };
     try { await restore(); } catch { throw new Error("modified_requires_manual_recovery"); }
