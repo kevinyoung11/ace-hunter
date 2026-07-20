@@ -9,8 +9,8 @@ config_file="${app_dir}/scheduler.conf"
 lock_dir="${app_dir}/run/collect-x.lock"
 
 fail() { printf '%s\n' "$1" >&2; exit 1; }
-file_owner() { stat -f '%u' "$1" 2>/dev/null || stat -c '%u' "$1"; }
-file_mode() { stat -f '%Lp' "$1" 2>/dev/null || stat -c '%a' "$1"; }
+file_owner() { [[ "$(uname -s)" = Darwin ]] && stat -f '%u' "$1" || stat -c '%u' "$1"; }
+file_mode() { [[ "$(uname -s)" = Darwin ]] && stat -f '%Lp' "$1" || stat -c '%a' "$1"; }
 [[ -f "$config_file" && ! -L "$config_file" ]] || fail configuration_error
 # shellcheck disable=SC1090
 source "$config_file"

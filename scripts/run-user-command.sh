@@ -4,8 +4,8 @@ umask 077
 script_dir="$(cd "$(dirname "$0")" && pwd -P)"
 release_root="$(cd "${script_dir}/.." && pwd -P)"
 app_dir="${HOME}/Library/Application Support/AceHunter"
-file_owner() { stat -f '%u' "$1" 2>/dev/null || stat -c '%u' "$1"; }
-file_mode() { stat -f '%Lp' "$1" 2>/dev/null || stat -c '%a' "$1"; }
+file_owner() { [[ "$(uname -s)" = Darwin ]] && stat -f '%u' "$1" || stat -c '%u' "$1"; }
+file_mode() { [[ "$(uname -s)" = Darwin ]] && stat -f '%Lp' "$1" || stat -c '%a' "$1"; }
 if [[ -n "${ACE_HUNTER_ENV_FILE:-}" ]]; then
   [[ "$ACE_HUNTER_ENV_FILE" = /* && -f "$ACE_HUNTER_ENV_FILE" && ! -L "$ACE_HUNTER_ENV_FILE" ]] || exit 1
   node_path="$("${release_root}/scripts/resolve-node22.sh" --fallback ${NODE_PATH:+"$NODE_PATH"})"

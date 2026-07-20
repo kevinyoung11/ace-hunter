@@ -13,8 +13,8 @@ case "$release_root" in
 esac
 [[ -x "${release_root}/scripts/run-scheduled-x.sh" ]] || { printf 'release_incomplete\n' >&2; exit 1; }
 runtime_env="${3:-${HOME}/Library/Application Support/AceHunter/runtime.env}"
-file_owner() { stat -f '%u' "$1" 2>/dev/null || stat -c '%u' "$1"; }
-file_mode() { stat -f '%Lp' "$1" 2>/dev/null || stat -c '%a' "$1"; }
+file_owner() { [[ "$(uname -s)" = Darwin ]] && stat -f '%u' "$1" || stat -c '%u' "$1"; }
+file_mode() { [[ "$(uname -s)" = Darwin ]] && stat -f '%Lp' "$1" || stat -c '%a' "$1"; }
 [[ "$runtime_env" = /* && -f "$runtime_env" && ! -L "$runtime_env" && "$(file_owner "$runtime_env")" = "$(id -u)" && "$(file_mode "$runtime_env")" = 600 ]] || { printf 'runtime_env_invalid\n' >&2; exit 1; }
 
 verify_binary() {
