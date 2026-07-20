@@ -47,8 +47,11 @@ chmod 700 "$app_dir" "$releases_dir" "${app_dir}/bin"
 candidate_tmp="${releases_dir}/.trusted-${main_sha}.$$"
 trap cleanup_trusted EXIT
 trap '' HUP INT TERM
-trap - ERR
-mkdir "$candidate_tmp"
+mkdir "$candidate_tmp" || {
+  mkdir_status=$?
+  trap - ERR HUP INT TERM
+  rollback_exit "$mkdir_status"
+}
 candidate_tmp_created=1
 trap 'rollback_exit $?' ERR
 trap 'rollback_exit 129' HUP
