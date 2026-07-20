@@ -161,8 +161,7 @@ export async function loadReportCandidates(pool: Pool, cutoff: Date): Promise<Re
         coalesce(trend.trending_ranks,'{}'::jsonb) trending_ranks,first.first_trending_at,
         (r.github_created_at <= $1 and (
           ($1-r.github_created_at <= interval '1 day' and latest.stars>=10) or
-          ($1-r.github_created_at <= interval '7 days' and latest.stars>=100) or
-          ($1-r.github_created_at <= interval '30 days' and latest.stars>=1000)
+          ($1-r.github_created_at <= interval '3 days' and latest.stars>=100)
         )) candidate_at_cutoff
       from ace_hunter.products p
       join primary_repo pr on pr.product_id=p.id

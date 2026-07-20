@@ -13,8 +13,7 @@ export function candidateBuckets(repo: { createdAt: Date; stars: number }, at: D
   const age = now - created;
   return [
     age <= dayMs && repo.stars >= 10 ? "age_1d_stars_10" : null,
-    age <= 7 * dayMs && repo.stars >= 100 ? "age_7d_stars_100" : null,
-    age <= 30 * dayMs && repo.stars >= 1_000 ? "age_30d_stars_1000" : null,
+    age <= 3 * dayMs && repo.stars >= 100 ? "age_3d_stars_100" : null,
   ].filter((value): value is string => value !== null);
 }
 

@@ -58,8 +58,7 @@ async function discoverWithOperation(
 
   const rules = [
     { from: new Date(searchAt.getTime() - day), to: searchAt, minStars: 10 },
-    { from: new Date(searchAt.getTime() - 7 * day), to: searchAt, minStars: 100 },
-    { from: new Date(searchAt.getTime() - 30 * day), to: searchAt, minStars: 1_000 },
+    { from: new Date(searchAt.getTime() - 3 * day), to: searchAt, minStars: 100 },
   ];
   const found = new Map<number, GitHubRepository>();
   try {
@@ -112,7 +111,7 @@ async function discoverWithOperation(
           repositoryId: persisted.repositoryId, capturedAt: utcHourBucket(at), granularity: "hourly",
           stars: repository.stars, forks: repository.forks, commits30d: null, prTotal: null,
           prOpen: null, prMerged: null, releasesCount: null, issuesTotal: null, issuesOpen: null,
-          issuesClosed: null, candidateBuckets: buckets, candidateRuleVersion: "v1",
+          issuesClosed: null, candidateBuckets: buckets, candidateRuleVersion: "v2",
           collectedFields: {
             core: true,
             source_job_run_id: options.runId ?? null,

@@ -18,9 +18,16 @@ function repo(id: number, stars = 10): GitHubRepository {
 describe("candidateBuckets", () => {
   const at = new Date("2026-07-19T00:00:00Z");
 
-  it("assigns every matching bucket including exact boundaries", () => {
-    expect(candidateBuckets({ createdAt: new Date("2026-07-18T00:00:00Z"), stars: 1_000 }, at))
-      .toEqual(["age_1d_stars_10", "age_7d_stars_100", "age_30d_stars_1000"]);
+  it("assigns every candidate-v2 bucket including exact boundaries", () => {
+    expect(candidateBuckets({ createdAt: new Date("2026-07-18T00:00:00Z"), stars: 100 }, at))
+      .toEqual(["age_1d_stars_10", "age_3d_stars_100"]);
+    expect(candidateBuckets({ createdAt: new Date("2026-07-16T00:00:00Z"), stars: 100 }, at))
+      .toEqual(["age_3d_stars_100"]);
+  });
+
+  it("excludes candidate-v2 buckets one millisecond after their age boundaries", () => {
+    expect(candidateBuckets({ createdAt: new Date("2026-07-17T23:59:59.999Z"), stars: 99 }, at)).toEqual([]);
+    expect(candidateBuckets({ createdAt: new Date("2026-07-15T23:59:59.999Z"), stars: 100_000 }, at)).toEqual([]);
   });
 
   it("rejects future, invalid, negative-star, and older repositories", () => {
