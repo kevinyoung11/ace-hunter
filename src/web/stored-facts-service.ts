@@ -4,10 +4,29 @@ import type { Pool } from "pg";
 
 export type WebOutput = Record<string, unknown> & { kind?: string };
 export type TrendingPeriod = "daily" | "weekly" | "monthly";
+export type TrendingOutput =
+  | {
+      kind: "trending";
+      period: TrendingPeriod;
+      items: Array<{
+        rank: number;
+        fullName: string;
+        repoUrl: string;
+        language: string;
+        starsInPeriod: number | null;
+        stars: number | null;
+        capturedAt: string;
+      }>;
+    }
+  | {
+      kind: "not_found";
+      reason: "trending_unavailable";
+      period: TrendingPeriod;
+    };
 
 export interface StoredFactsService {
   today(): Promise<WebOutput>;
-  trending(period: TrendingPeriod): Promise<WebOutput>;
+  trending(period: TrendingPeriod): Promise<TrendingOutput>;
   analyze(target: string): Promise<WebOutput>;
   listMonitors(): Promise<WebOutput>;
   follow(target: string): Promise<WebOutput>;
@@ -30,7 +49,7 @@ export function createStoredFactsService({ pool, userId }: { pool: Pool; userId:
       const row = (await pool.query<{ id: string; status: string; data_cutoff_at: Date; structured_content: unknown }>("select id,status,data_cutoff_at,structured_content from ace_hunter.analysis_outputs where output_type='daily_report' and status in ('complete','partial') order by period_end desc,completed_at desc,id desc limit 1")).rows[0];
       return row ? { kind: "daily_report", id: row.id, status: row.status, dataCutoffAt: row.data_cutoff_at.toISOString(), content: row.structured_content } : { kind: "not_found", reason: "daily_report_unavailable" };
     },
-    async trending(period) {
+    async trending(period): Promise<TrendingOutput> {
       const rows = (await pool.query<{ rank: number; full_name: string; repo_url: string; language: string; stars_in_period: string | null; stars: string | null; captured_at: Date }>(`with latest_batch as (
         select max(captured_at) captured_at
         from ace_hunter.github_trending_snapshots

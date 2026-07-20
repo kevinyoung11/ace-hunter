@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Pool } from "pg";
-import { createStoredFactsService } from "../../../src/web/stored-facts-service.js";
+import { createStoredFactsService, type TrendingOutput } from "../../../src/web/stored-facts-service.js";
 
 describe("createStoredFactsService", () => {
   it("preserves ambiguous analysis responses", async () => {
@@ -37,5 +37,19 @@ describe("createStoredFactsService", () => {
     const service = createStoredFactsService({ pool, userId: "11111111-1111-4111-8111-111111111111" });
 
     await expect(service.trending("monthly")).resolves.toEqual({ kind: "not_found", reason: "trending_unavailable", period: "monthly" });
+  });
+
+  it("exposes a discriminated trending response type", async () => {
+    const pool = { query: vi.fn().mockResolvedValue({ rows: [] }) } as unknown as Pool;
+    const service = createStoredFactsService({ pool, userId: "11111111-1111-4111-8111-111111111111" });
+    const result: TrendingOutput = await service.trending("weekly");
+
+    if (result.kind === "trending") {
+      expect(result.items).toEqual([]);
+      return;
+    }
+
+    expect(result.reason).toBe("trending_unavailable");
+    expect(result.period).toBe("weekly");
   });
 });
