@@ -127,9 +127,9 @@ export function renderPotentialList(value: PotentialList): string {
       `- 平均每小时 Star：${formatNumber(item.starsPerHour)}`,
       `- Fork：${item.forks ?? "—"}`,
       `- 数据捕获时间：${item.capturedAt}`,
-      `- GitHub：${item.repositoryUrl}`,
+      `- [GitHub](${item.repositoryUrl})`,
     );
-    if (item.homepageUrl !== null) lines.push(`- 演示网页：${item.homepageUrl}`);
+    if (item.homepageUrl !== null) lines.push(`- [演示网页](${item.homepageUrl})`);
     lines.push("");
   });
   return lines.join("\n").trimEnd() + "\n";

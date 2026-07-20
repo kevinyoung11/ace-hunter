@@ -36,8 +36,8 @@ describe("potential repository Markdown", () => {
 
     expect(markdown).toContain("筛选规则：全部（1 天 / 3 天）");
     expect(markdown).toContain("命中规则：1 天（24 小时内且 Star ≥ 10）、3 天（72 小时内且 Star ≥ 100）");
-    expect(markdown).toContain("GitHub：https://github.com/acme/rocket");
-    expect(markdown).toContain("演示网页：https://rocket.example/");
+    expect(markdown).toContain("[GitHub](https://github.com/acme/rocket)");
+    expect(markdown).toContain("[演示网页](https://rocket.example/)");
     expect(markdown).toContain("数据捕获时间：2026-07-19T23:55:00.000Z");
     expect(markdown.endsWith("\n")).toBe(true);
     expect(markdown.endsWith("\n\n")).toBe(false);

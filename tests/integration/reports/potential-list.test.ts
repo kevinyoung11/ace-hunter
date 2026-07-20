@@ -114,6 +114,24 @@ describe("potential repository read model", () => {
       .map((item) => item.name)).toEqual(["dual", "three-day"]);
   });
 
+  it("uses every documented comparator level after velocity ties", async () => {
+    await seed("stars-high", "2026-07-19T22:00:00.000Z", 20);
+    await seed("created-new-z", "2026-07-19T23:45:00.000Z", 10);
+    await seed("created-new-a", "2026-07-19T23:45:00.000Z", 10);
+    await seed("created-middle", "2026-07-19T23:30:00.000Z", 10);
+    await seed("stars-low", "2026-07-19T23:00:00.000Z", 10);
+
+    const result = await loadPotentialRepositories(runtimePool, { now, rule: "all", limit: null });
+
+    expect(result.items.map((item) => [item.name, item.starsPerHour])).toEqual([
+      ["stars-high", 10],
+      ["created-new-a", 10],
+      ["created-new-z", 10],
+      ["created-middle", 10],
+      ["stars-low", 10],
+    ]);
+  });
+
   it("rejects invalid options and unsafe numeric facts", async () => {
     await expect(loadPotentialRepositories(runtimePool, { now: new Date("bad"), rule: "all", limit: 20 }))
       .rejects.toThrow("invalid_potential_now");
