@@ -35,12 +35,17 @@ export function TrendingBoard({ initialItems, initialUnavailable = false }: Tren
   const [lastCapturedAt, setLastCapturedAt] = useState(() => latestCapturedAt(initialItems));
   const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
 
-  async function selectPeriod(nextPeriod: TrendingPeriod) {
-    if (state === "loading" || (nextPeriod === period && state !== "error" && !(nextPeriod === "daily" && canRetryInitialDaily))) return;
+  function selectPeriod(nextPeriod: TrendingPeriod): boolean {
+    if (state === "loading" || (nextPeriod === period && state !== "error" && !(nextPeriod === "daily" && canRetryInitialDaily))) return false;
 
     setPeriod(nextPeriod);
     setState("loading");
     setCanRetryInitialDaily(false);
+    void loadPeriod(nextPeriod);
+    return true;
+  }
+
+  async function loadPeriod(nextPeriod: TrendingPeriod) {
     try {
       const response = await fetch(`/api/trending?period=${nextPeriod}`);
       const payload: unknown = await response.json();
@@ -66,8 +71,8 @@ export function TrendingBoard({ initialItems, initialUnavailable = false }: Tren
 
   function selectTab(index: number) {
     const nextPeriod = periods[index];
+    if (!selectPeriod(nextPeriod.value)) return;
     tabRefs.current[index]?.focus();
-    void selectPeriod(nextPeriod.value);
   }
 
   function handleTabKeyDown(event: React.KeyboardEvent<HTMLButtonElement>, index: number) {
@@ -101,7 +106,7 @@ export function TrendingBoard({ initialItems, initialUnavailable = false }: Tren
             aria-selected={candidate.value === period}
             id={`trending-tab-${candidate.value}`}
             key={candidate.value}
-            onClick={() => void selectPeriod(candidate.value)}
+            onClick={() => { selectPeriod(candidate.value); }}
             onKeyDown={(event) => handleTabKeyDown(event, index)}
             ref={(element) => { tabRefs.current[index] = element; }}
             role="tab"
@@ -112,33 +117,44 @@ export function TrendingBoard({ initialItems, initialUnavailable = false }: Tren
           </button>
         ))}
       </div>
-      <div aria-labelledby={`trending-tab-${period}`} id={`trending-panel-${period}`} role="tabpanel" tabIndex={0}>
-        <div className="ranking-column-headings">
-          <span>{selectedPeriod.numeral}</span><span>Repository</span><span>Language</span><span>{selectedPeriod.starHeading}</span><span>Total stars</span><span>Captured</span>
+      {periods.map((candidate) => (
+        <div
+          aria-labelledby={`trending-tab-${candidate.value}`}
+          hidden={candidate.value !== period}
+          id={`trending-panel-${candidate.value}`}
+          key={candidate.value}
+          role="tabpanel"
+          tabIndex={candidate.value === period ? 0 : -1}
+        >
+          {candidate.value === period ? <>
+            <div className="ranking-column-headings">
+              <span>{selectedPeriod.numeral}</span><span>Repository</span><span>Language</span><span>{selectedPeriod.starHeading}</span><span>Total stars</span><span>Captured</span>
+            </div>
+            {state === "loading" ? <p aria-live="polite">正在加载趋势榜…</p> : null}
+            {state === "error" ? <p aria-live="polite">趋势榜暂时无法加载，请稍后重试。</p> : null}
+            {state === "ready" && items.length === 0 ? <p aria-live="polite">{selectedPeriod.emptyLabel}</p> : null}
+            {state === "ready" && items.length > 0 ? (
+              <ol className="ranking-list">
+                {items.map((item) => (
+                  <li className="ranking-row" key={item.id}>
+                    <span className="ranking-rank">#{item.rank ?? "—"}</span>
+                    <div className="ranking-repository">
+                      {item.href ? <a href={item.href}>{item.name}</a> : <strong>{item.name}</strong>}
+                      {item.description && item.description !== item.language ? <p>{item.description}</p> : null}
+                    </div>
+                    <dl className="ranking-facts">
+                      <div><dt>Language</dt><dd>{item.language ?? "—"}</dd></div>
+                      <div><dt>{selectedPeriod.starHeading}</dt><dd>{formatPeriodStars(item.starsInPeriod)}</dd></div>
+                      <div><dt>Total stars</dt><dd>{formatNumber(item.stars)}</dd></div>
+                      <div><dt>Captured</dt><dd>{formatCapturedAt(item.capturedAt)}</dd></div>
+                    </dl>
+                  </li>
+                ))}
+              </ol>
+            ) : null}
+          </> : null}
         </div>
-        {state === "loading" ? <p aria-live="polite">正在加载趋势榜…</p> : null}
-        {state === "error" ? <p aria-live="polite">趋势榜暂时无法加载，请稍后重试。</p> : null}
-        {state === "ready" && items.length === 0 ? <p aria-live="polite">{selectedPeriod.emptyLabel}</p> : null}
-        {state === "ready" && items.length > 0 ? (
-          <ol className="ranking-list">
-            {items.map((item) => (
-              <li className="ranking-row" key={item.id}>
-                <span className="ranking-rank">#{item.rank ?? "—"}</span>
-                <div className="ranking-repository">
-                  {item.href ? <a href={item.href}>{item.name}</a> : <strong>{item.name}</strong>}
-                  {item.description && item.description !== item.language ? <p>{item.description}</p> : null}
-                </div>
-                <dl className="ranking-facts">
-                  <div><dt>Language</dt><dd>{item.language ?? "—"}</dd></div>
-                  <div><dt>{selectedPeriod.starHeading}</dt><dd>{formatPeriodStars(item.starsInPeriod)}</dd></div>
-                  <div><dt>Total stars</dt><dd>{formatNumber(item.stars)}</dd></div>
-                  <div><dt>Captured</dt><dd>{formatCapturedAt(item.capturedAt)}</dd></div>
-                </dl>
-              </li>
-            ))}
-          </ol>
-        ) : null}
-      </div>
+      ))}
     </section>
   );
 }

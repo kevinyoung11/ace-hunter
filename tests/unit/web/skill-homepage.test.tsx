@@ -42,12 +42,15 @@ describe("SkillHomepage", () => {
 });
 
 describe("TrendingBoard", () => {
-  it("exposes the period controls as linked tabs and selects the matching panel", () => {
+  it("links every tab to an existing stable panel and hides inactive panels", () => {
     render(<TrendingBoard initialItems={[]} />);
 
-    const today = screen.getByRole("tab", { name: "今日", selected: true });
-    expect(today.getAttribute("aria-controls")).toBe("trending-panel-daily");
-    expect(screen.getByRole("tabpanel").getAttribute("aria-labelledby")).toBe(today.id);
+    for (const tab of screen.getAllByRole("tab")) {
+      const panel = document.getElementById(tab.getAttribute("aria-controls")!);
+      expect(panel).not.toBeNull();
+      expect(panel?.getAttribute("aria-labelledby")).toBe(tab.id);
+      expect(panel?.hidden).toBe(tab.getAttribute("aria-selected") !== "true");
+    }
   });
 
   it("moves tab focus and loads the adjacent period with ArrowRight", async () => {
@@ -63,6 +66,39 @@ describe("TrendingBoard", () => {
     expect(document.activeElement).toBe(screen.getByRole("tab", { name: "本周", selected: true }));
     expect(screen.getByText("02")).not.toBeNull();
     expect(screen.getByText("Weekly stars")).not.toBeNull();
+  });
+
+  it("selects tabs with ArrowLeft, Home, and End", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ items: [] }) });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<TrendingBoard initialItems={[]} />);
+
+    const today = screen.getByRole("tab", { name: "今日" });
+    fireEvent.keyDown(today, { key: "End" });
+    await waitFor(() => expect(fetchMock).toHaveBeenLastCalledWith("/api/trending?period=monthly"));
+    const monthly = screen.getByRole("tab", { name: "本月", selected: true });
+    expect(document.activeElement).toBe(monthly);
+
+    fireEvent.keyDown(monthly, { key: "Home" });
+    await waitFor(() => expect(fetchMock).toHaveBeenLastCalledWith("/api/trending?period=daily"));
+    const selectedToday = screen.getByRole("tab", { name: "今日", selected: true });
+    fireEvent.keyDown(selectedToday, { key: "ArrowLeft" });
+    await waitFor(() => expect(fetchMock).toHaveBeenLastCalledWith("/api/trending?period=monthly"));
+    expect(screen.getByRole("tab", { name: "本月", selected: true })).toBe(document.activeElement);
+  });
+
+  it("does not move focus or selection when keyboard navigation is rejected while loading", () => {
+    vi.stubGlobal("fetch", vi.fn(() => new Promise(() => {})));
+    render(<TrendingBoard initialItems={[]} />);
+
+    const today = screen.getByRole("tab", { name: "今日" });
+    fireEvent.keyDown(today, { key: "ArrowRight" });
+    const weekly = screen.getByRole("tab", { name: "本周", selected: true });
+    fireEvent.keyDown(weekly, { key: "ArrowRight" });
+
+    expect(document.activeElement).toBe(weekly);
+    expect(screen.getByRole("tab", { name: "本周", selected: true })).toBe(weekly);
+    expect(screen.getByRole("tab", { name: "本月" }).getAttribute("aria-selected")).toBe("false");
   });
 
   it("fetches and renders the selected period", async () => {
