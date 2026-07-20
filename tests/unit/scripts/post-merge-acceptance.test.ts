@@ -122,9 +122,8 @@ describe("post-merge database facts", () => {
   it("binds the observed Skill result to a persisted realtime observation", async () => {
     const acceptance = await readFile("scripts/post-merge-acceptance.ts", "utf8");
     expect(acceptance).toContain('skill-observe.json');
-    expect(acceptance).toContain("observationId");
-    expect(acceptance).toContain("output_type='realtime_observation'");
-    expect(acceptance).toContain("missing_skill_realtime_observation");
+    expect(acceptance).toContain("verifyAcceptedSkillObservation");
+    expect(acceptance).toContain('process.env.ACE_E2E_REPOSITORY');
   });
 
   it("keeps production history read-only during fact verification", async () => {
