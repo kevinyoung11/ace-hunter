@@ -31,7 +31,9 @@ node_persistent_path="$("${release_root}/scripts/resolve-node22.sh")"
 node_path="$(verify_binary "$node_persistent_path")" || { printf 'unsafe_node_binary\n' >&2; exit 1; }
 twitter_path="$(verify_binary "$(command -v twitter)")" || { printf 'unsafe_twitter_binary\n' >&2; exit 1; }
 "$node_path" --version >/dev/null
-"$node_path" "${release_root}/dist/scripts/assert-twitter-preflight.js" --twitter-cli-path "$twitter_path" >/dev/null
+# X is an auxiliary source.  Its remote availability must not prevent the
+# GitHub-facing Skill and its owner-only runtime configuration from installing.
+# The scheduled X job performs this preflight when it actually runs.
 
 app_dir="${HOME}/Library/Application Support/AceHunter"
 bin_dir="${app_dir}/bin"
