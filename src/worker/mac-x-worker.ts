@@ -51,7 +51,8 @@ export class MacXWorker {
       };
       const output = await this.options.dispatcher(input);
       if (!output.runId) throw Object.assign(new Error("job_run_missing"), { code: "job_run_missing" });
-      await this.options.service.bind(command.id, this.options.workerId, output.runId);
+      const bound = await this.options.service.bind(command.id, this.options.workerId, output.runId);
+      if (!bound) throw Object.assign(new Error("command_bind_failed"), { code: "command_bind_failed" });
       const status = terminalStatus(output.status);
       await this.options.service.complete(command.id, this.options.workerId, status);
       return { processed: true, commandId: command.id, status };
