@@ -16,7 +16,7 @@ export type JobName = typeof JOB_CATALOG[number][0];
 export type Executor = "github" | "local";
 export interface JobDefinition { name: JobName; executor: Executor; capability: string; enabled: boolean; pausedAt?: Date | null }
 const uuid = z.string().uuid();
-const schemas: Record<JobName, z.ZodTypeAny> = {
+const schemas: Record<JobName, z.ZodObject<z.ZodRawShape>> = {
   discover_github_candidates: z.object({ max_new: z.number().int().min(1).max(1000).optional() }).strict(),
   collect_github_trending: z.object({ period: z.enum(["daily","weekly","monthly"]).optional() }).strict(),
   refresh_repo_metrics: z.object({}).strict(),
@@ -40,5 +40,6 @@ export function validateJobRequest(input: { name: string; executor?: Executor; c
   if (input.executor && input.executor !== definition.executor) throw new Error("executor_mismatch");
   if (input.capability && input.capability !== definition.capability) throw new Error("capability_mismatch");
   const parameters = params.parse(input.parameters ?? {}) as Record<string, unknown>;
-  return { definition, parameters: z.intersection(schemas[definition.name], trusted).parse(parameters) as Record<string, unknown> };
+  const schema = schemas[definition.name].extend(trusted.shape).strict();
+  return { definition, parameters: schema.parse(parameters) as Record<string, unknown> };
 }
