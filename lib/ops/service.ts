@@ -5,7 +5,6 @@ import { WorkerHeartbeatStore } from "../../src/db/stores/worker-heartbeat-store
 import { OpsAuditStore } from "../../src/db/stores/ops-audit-store";
 import { validateJobRequest, type Executor } from "../../src/ops/job-catalog";
 import { loadOpsConfig } from "./environment";
-import { JOB_CATALOG } from "../../src/ops/job-catalog";
 let singleton: OpsService | undefined;
 export class OpsService {
   public readonly pool = createPool(loadOpsConfig().ACE_HUNTER_OPS_DATABASE_URL);

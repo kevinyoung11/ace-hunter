@@ -76,6 +76,7 @@ function invoke(command: string, args: string[] = [], stalePersistedNode = false
 
   execFileSync("bash", [join(release, "scripts", "run-user-command.sh"), command, ...args], {
     env: {
+      NODE_ENV: "test",
       PATH: `${root}:${process.env.PATH}`,
       HOME: home,
       TMPDIR: join(root, "tmp"),

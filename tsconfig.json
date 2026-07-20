@@ -41,7 +41,6 @@
     "lib/**/*.ts",
     "tests/**/*.ts",
     "tests/**/*.tsx",
-    "next-env.d.ts",
     ".next/types/**/*.ts",
     "vitest.config.ts",
     "eslint.config.js",
