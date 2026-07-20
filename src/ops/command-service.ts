@@ -20,8 +20,8 @@ export class CommandService {
   public async complete(commandId:string,workerId:string,status:"succeeded"|"partial"|"failed",errorCode?:string,errorMessage?:string){return this.commands.call("complete_job_command",[commandId,workerId,status,errorCode??null,errorMessage??null]);}
   public async cancel(commandId:string,actor:string){return this.commands.call("cancel_job_command",[commandId,actor]);}
   public async requeue(commandId:string,actor:string){return this.commands.call("requeue_job_command",[commandId,actor]);}
-  public async retry(commandId:string,actor:string){const result=await this.commands.retry(commandId); if(result) await this.audit?.record({actor,action:"retry",jobName:result.jobName,commandId}); return result;}
-  public async setEnabled(jobName:string,enabled:boolean,actor:string){if(!this.definitions) throw new Error("job_definition_store_required"); await this.definitions.setEnabled(jobName,enabled); await this.audit?.record({actor,action:enabled?"enable":"pause",jobName});}
+  public async retry(commandId:string,actor:string){return this.commands.retry(commandId,actor);}
+  public async setEnabled(jobName:string,enabled:boolean,actor:string){if(!this.definitions) throw new Error("job_definition_store_required"); return this.definitions.setEnabled(jobName,enabled,actor);}
   public async heartbeat(workerId:string,executor:Executor,capabilities:string[],version?:string,metadata?:Record<string,unknown>){
     if (!this.heartbeats) throw new Error("heartbeat_store_required");
     return this.heartbeats.heartbeat({ workerId, executor, capabilities, version, metadata });

@@ -198,3 +198,25 @@ grant execute on function ace_hunter.claim_job_command(text,text,text[]) to ace_
 grant execute on function ace_hunter.start_job_command(uuid,text), ace_hunter.bind_job_run(uuid,text,uuid), ace_hunter.complete_job_command(uuid,text,text,text,text) to ace_hunter_mac_worker, ace_hunter_github_runtime;
 grant execute on function ace_hunter.cancel_job_command(uuid,text), ace_hunter.requeue_job_command(uuid,text) to ace_hunter_ops;
 grant execute on function ace_hunter.heartbeat_worker(text,text,text[],text,jsonb) to ace_hunter_mac_worker, ace_hunter_github_runtime;
+
+create or replace function ace_hunter.set_job_enabled(p_job_name text, p_enabled boolean, p_actor text)
+returns ace_hunter.job_definitions language plpgsql security definer volatile
+set search_path = ace_hunter, pg_catalog as $$
+declare result ace_hunter.job_definitions;
+begin
+ update ace_hunter.job_definitions set enabled=p_enabled, paused_at=case when p_enabled then null else coalesce(paused_at,now()) end, updated_at=now() where name=p_job_name returning * into result;
+ if result.name is null then raise exception 'unknown_job' using errcode='22023'; end if;
+ insert into ace_hunter.ops_audit_log(actor,action,job_name,details) values(p_actor,case when p_enabled then 'enable' else 'pause' end,p_job_name,'{}');
+ return result;
+end $$;
+create or replace function ace_hunter.retry_job_command(p_command_id uuid, p_actor text)
+returns ace_hunter.job_commands language plpgsql security definer volatile
+set search_path = ace_hunter, pg_catalog as $$
+declare result ace_hunter.job_commands;
+begin
+ update ace_hunter.job_commands set status='queued',claimed_by=null,lease_until=null,started_at=null,finished_at=null,error_code=null,error_message=null,updated_at=now() where id=p_command_id and status in ('failed','partial') returning * into result;
+ if result.id is null then raise exception 'command_not_requeueable' using errcode='42501'; end if;
+ insert into ace_hunter.ops_audit_log(actor,action,job_name,command_id) values(p_actor,'retry',result.job_name,result.id);
+ return result;
+end $$;
+grant execute on function ace_hunter.set_job_enabled(text,boolean,text), ace_hunter.retry_job_command(uuid,text) to ace_hunter_ops;
