@@ -14,6 +14,11 @@ export interface WebConfig {
   readonly supabasePublishableKey: string;
 }
 
+export interface SupabasePublicConfig {
+  readonly supabaseUrl: string;
+  readonly supabasePublishableKey: string;
+}
+
 export function loadWebConfig(env: Record<string, string | undefined>): WebConfig {
   const parsed = schema.safeParse(env);
   if (!parsed.success) {
@@ -38,5 +43,22 @@ export function readWebConfig(): WebConfig {
     ACE_HUNTER_USER_ID: process.env.ACE_HUNTER_USER_ID,
     NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL,
     NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY,
+  });
+}
+
+export function readSupabasePublicConfig(): SupabasePublicConfig {
+  const parsed = schema.pick({
+    NEXT_PUBLIC_SUPABASE_URL: true,
+    NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: true,
+  }).safeParse({
+    NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL,
+    NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY,
+  });
+  if (!parsed.success) {
+    throw new Error(`Invalid Supabase public configuration keys: ${parsed.error.issues.map((issue) => issue.path.join(".")).join(", ")}`);
+  }
+  return Object.freeze({
+    supabaseUrl: parsed.data.NEXT_PUBLIC_SUPABASE_URL,
+    supabasePublishableKey: parsed.data.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY,
   });
 }
