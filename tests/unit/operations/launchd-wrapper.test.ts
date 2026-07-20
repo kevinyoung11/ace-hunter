@@ -79,10 +79,12 @@ async function makeFixture(slowPreflight: boolean, proxy?: string) {
   await mkdir(join(release, "dist/scripts"), { recursive: true });
   await mkdir(join(release, "dist/src/cli"), { recursive: true });
   await mkdir(bin, { recursive: true });
+  await mkdir(join(release, "scripts"), { recursive: true });
+  await writeFile(join(release, "scripts", "resolve-node22.sh"), await readFile("scripts/resolve-node22.sh", "utf8"), { mode: 0o755 });
   const node = join(bin, "node");
   const keychain = join(bin, "keychain");
   const twitter = join(bin, "twitter");
-  await writeFile(node, `#!/bin/bash\ncase "$1" in *assert-twitter-preflight.js) printf '%s' "\${HTTPS_PROXY:-missing}" >"$HOME/proxy-seen"; ${slowPreflight ? "sleep 30" : ":"};; esac\nexit 0\n`);
+  await writeFile(node, `#!/bin/bash\nif [[ "\${1:-}" = --version ]]; then printf 'v22.17.0\\n'; exit 0; fi\ncase "$1" in *assert-twitter-preflight.js) printf '%s' "\${HTTPS_PROXY:-missing}" >"$HOME/proxy-seen"; ${slowPreflight ? "sleep 30" : ":"};; esac\nexit 0\n`);
   await writeFile(keychain, "#!/bin/bash\nprintf value\n");
   await writeFile(twitter, "#!/bin/bash\nexit 0\n");
   await Promise.all([node, keychain, twitter].map((path) => chmod(path, 0o700)));

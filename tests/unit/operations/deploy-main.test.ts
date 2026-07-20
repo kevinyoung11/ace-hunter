@@ -14,6 +14,13 @@ it("smoke-tests list with its actual option-free CLI contract", async () => {
   expect(script).not.toMatch(/\blist --format\b/);
 });
 
+it("builds the immutable release with npm and lifecycle PATH from the selected Node 22 installation", async () => {
+  const script = await readFile("ops/launchd/deploy-main.sh", "utf8");
+  expect(script).toContain("node22_npm_not_found");
+  expect(script).toContain('PATH="${node_bin_dir}:$PATH" "$node_path" "$npm_cli" ci');
+  expect(script).not.toContain("npm ci");
+});
+
 describe("post-switch minimal signal smokes", () => {
   it("captures every deployment-managed JSON route for content validation with DB-only env", async () => {
     const script = await readFile("ops/launchd/deploy-main.sh", "utf8");
@@ -108,6 +115,11 @@ describe("post-switch minimal signal smokes", () => {
         `#!/bin/bash\ncase "$1" in fetch|cat-file) exit 0;; rev-parse) printf '%s\\n' '${sha}';; *) exit 1;; esac\n`,
         { mode: 0o755 });
       await chmod(fakeGit, 0o755);
+      const fakeNode = join(fakeBin, "node");
+      await writeFile(fakeNode, `#!/bin/bash
+if [[ "\${1:-}" = --version ]]; then printf 'v22.17.0\\n'; exit 0; fi
+exec ${JSON.stringify(process.execPath)} "$@"
+`, { mode: 0o755 });
       const fakeLaunchctl = join(fakeBin, "launchctl");
       await writeFile(fakeLaunchctl, `#!/bin/bash
 case "$1" in

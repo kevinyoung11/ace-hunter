@@ -13,8 +13,7 @@ case "$live_env" in "${temp_base}"/ace-hunter-live-*/runtime.env) ;; *) exit 1;;
 live_dir="$(dirname "$live_env")"
 [[ "$(stat -f '%u' "$live_env")" = "$(id -u)" && "$(stat -f '%Lp' "$live_dir")" = 700 && "$(stat -f '%Lp' "$live_env")" = 600 ]] || exit 1
 release="${HOME}/Library/Application Support/AceHunter/releases/${main_sha}"
-node_path="$(command -v node)"
-node_path="$(realpath "$node_path")"
+node_path="$("${release}/scripts/resolve-node22.sh")"
 transaction_helper="${release}/scripts/release-transaction.mjs"
 "$node_path" "$transaction_helper" verify "$release_transaction" >/dev/null
 readonly_env="${release_transaction}/readonly.env"
@@ -79,11 +78,11 @@ for workflow in discover.yml trending.yml refresh-metrics.yml daily-report.yml r
   dispatch_and_watch "$workflow"
 done
 acceptance_json="${live_dir}/acceptance-runs.json"
-node -e 'const fs=require("node:fs");const rows=fs.readFileSync(process.argv[1],"utf8").trim().split(/\n+/).filter(Boolean).map(JSON.parse);fs.writeFileSync(process.argv[2],JSON.stringify(rows),{mode:0o600,flag:"wx"})' "$records" "$acceptance_json"
+"$node_path" -e 'const fs=require("node:fs");const rows=fs.readFileSync(process.argv[1],"utf8").trim().split(/\n+/).filter(Boolean).map(JSON.parse);fs.writeFileSync(process.argv[2],JSON.stringify(rows),{mode:0o600,flag:"wx"})' "$records" "$acceptance_json"
 
 launchd_mode="$("$node_path" "$transaction_helper" launchd-mode "$release_transaction")"
 ops/launchd/install.sh "$release" "$launchd_mode"
-kickstart_boundary="$(ACE_HUNTER_ENV_FILE="$live_env" node --import tsx -e 'import{Pool}from"pg";import{loadRuntimeConfig}from"./src/config/load-config.ts";const p=new Pool({connectionString:loadRuntimeConfig(process.env).runtimeDatabaseUrl});const r=await p.query("select clock_timestamp() now");await p.end();process.stdout.write(r.rows[0].now.toISOString())')"
+kickstart_boundary="$(ACE_HUNTER_ENV_FILE="$live_env" "$node_path" --import tsx -e 'import{Pool}from"pg";import{loadRuntimeConfig}from"./src/config/load-config.ts";const p=new Pool({connectionString:loadRuntimeConfig(process.env).runtimeDatabaseUrl});const r=await p.query("select clock_timestamp() now");await p.end();process.stdout.write(r.rows[0].now.toISOString())')"
 lock_dir="${HOME}/Library/Application Support/AceHunter/run/collect-x.lock"
 mkdir -p "$lock_dir"
 printf '999999\n%s\n' "${release}/scripts/run-scheduled-x.sh" >"${lock_dir}/owner"
@@ -91,7 +90,7 @@ launchctl kickstart -k "gui/$(id -u)/com.kevinyoung.ace-hunter.collect-x"
 durable_ready=0
 for poll in $(seq 1 120); do
   sleep 5
-  if ACE_HUNTER_ENV_FILE="$live_env" KICKSTART_BOUNDARY="$kickstart_boundary" node --import tsx -e 'import{Pool}from"pg";import{loadRuntimeConfig}from"./src/config/load-config.ts";const p=new Pool({connectionString:loadRuntimeConfig(process.env).runtimeDatabaseUrl});const r=await p.query("select count(distinct job_name)::int n from ace_hunter.job_runs where created_at>$1 and parent_run_id is null and parameters->>$2=$3 and status in ($4,$5) and job_name=any($6::text[])",[process.env.KICKSTART_BOUNDARY,"scheduler","launchd","success","partial",["collect_x_posts","analyze_x_posts","collect_x_comments"]]);await p.end();process.exit(r.rows[0].n===3?0:1)' 2>/dev/null; then durable_ready=1; break; fi
+  if ACE_HUNTER_ENV_FILE="$live_env" KICKSTART_BOUNDARY="$kickstart_boundary" "$node_path" --import tsx -e 'import{Pool}from"pg";import{loadRuntimeConfig}from"./src/config/load-config.ts";const p=new Pool({connectionString:loadRuntimeConfig(process.env).runtimeDatabaseUrl});const r=await p.query("select count(distinct job_name)::int n from ace_hunter.job_runs where created_at>$1 and parent_run_id is null and parameters->>$2=$3 and status in ($4,$5) and job_name=any($6::text[])",[process.env.KICKSTART_BOUNDARY,"scheduler","launchd","success","partial",["collect_x_posts","analyze_x_posts","collect_x_comments"]]);await p.end();process.exit(r.rows[0].n===3?0:1)' 2>/dev/null; then durable_ready=1; break; fi
 done
 [[ "$durable_ready" -eq 1 ]] || { printf 'durable_x_timeout\n' >&2; exit 1; }
 
@@ -127,7 +126,7 @@ chmod 600 "${smoke_dir}/skill-weekly.json" "${smoke_dir}/skill-potential.json"
 : "${ACCEPTANCE_STARTED_AT:?ACCEPTANCE_STARTED_AT is required}"
 export KICKSTART_BOUNDARY="$kickstart_boundary" ACCEPTANCE_RUN_IDS_FILE="$acceptance_json" \
   MAIN_SHA="$main_sha" SIGNAL_SMOKE_DIR="$smoke_dir"
-ACE_HUNTER_ENV_FILE="$live_env" node --import tsx scripts/post-merge-acceptance.ts
+ACE_HUNTER_ENV_FILE="$live_env" "$node_path" --import tsx scripts/post-merge-acceptance.ts
 git -C "$repo_root" fetch --quiet origin main
 [[ "$(git -C "$repo_root" rev-parse origin/main)" = "$main_sha" ]]
 continuation_complete=1

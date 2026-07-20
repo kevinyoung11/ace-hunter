@@ -23,7 +23,7 @@ verify_binary() {
   (( (8#$mode & 8#022) == 0 )) || return 1
   printf '%s' "$candidate"
 }
-node_path="$(verify_binary "$(command -v node)")" || { printf 'unsafe_node_binary\n' >&2; exit 1; }
+node_path="$(verify_binary "$("${release_root}/scripts/resolve-node22.sh")")" || { printf 'unsafe_node_binary\n' >&2; exit 1; }
 twitter_path="$(verify_binary "$(command -v twitter)")" || { printf 'unsafe_twitter_binary\n' >&2; exit 1; }
 "$node_path" --version >/dev/null
 "$node_path" "${release_root}/dist/scripts/assert-twitter-preflight.js" --twitter-cli-path "$twitter_path" >/dev/null

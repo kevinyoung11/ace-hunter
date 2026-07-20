@@ -12,7 +12,7 @@ it("waits for the three distinct successful launchd parent stages", async () => 
 it("keeps the owner release transaction active across continuation until the parent commits", async () => {
   const parent = await readFile("scripts/run-post-merge-release.sh", "utf8");
   const continuation = await readFile("scripts/continue-post-merge-release.sh", "utf8");
-  expect(parent).toContain('node "$transaction_helper" begin "$release_transaction"');
+  expect(parent).toContain('"$node_path" "$transaction_helper" begin "$release_transaction"');
   expect(parent).toContain('ops/launchd/deploy-main.sh "$main_sha" "$live_env" "$release_transaction"');
   expect(parent).not.toMatch(/exec\s+"\$\{release\}\/scripts\/continue-post-merge-release\.sh/u);
   const childCall = parent.indexOf('"${release}/scripts/continue-post-merge-release.sh"');

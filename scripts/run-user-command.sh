@@ -6,10 +6,12 @@ release_root="$(cd "${script_dir}/.." && pwd -P)"
 app_dir="${HOME}/Library/Application Support/AceHunter"
 if [[ -n "${ACE_HUNTER_ENV_FILE:-}" ]]; then
   [[ "$ACE_HUNTER_ENV_FILE" = /* && -f "$ACE_HUNTER_ENV_FILE" && ! -L "$ACE_HUNTER_ENV_FILE" ]] || exit 1
-  exec "${NODE_PATH:-$(command -v node)}" "${release_root}/dist/src/cli/index.js" "$@"
+  node_path="$("${release_root}/scripts/resolve-node22.sh" ${NODE_PATH:+"$NODE_PATH"})"
+  exec "$node_path" "${release_root}/dist/src/cli/index.js" "$@"
 fi
 # shellcheck disable=SC1090
 source "${app_dir}/scheduler.conf"
+NODE_PATH="$("${release_root}/scripts/resolve-node22.sh" "$NODE_PATH")"
 runtime_dir="$(mktemp -d "${TMPDIR:-/tmp}/ace-hunter-user.XXXXXX")"
 trap 'rm -rf "$runtime_dir"' EXIT INT TERM
 env_file="${runtime_dir}/runtime.env"

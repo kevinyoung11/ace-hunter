@@ -44,6 +44,7 @@ function invoke(command: string, args: string[] = []): { accounts: string[]; arg
   mkdirSync(appDirectory, { recursive: true });
   mkdirSync(join(root, "tmp"), { recursive: true });
   cpSync(join(process.cwd(), "scripts", "run-user-command.sh"), join(release, "scripts", "run-user-command.sh"));
+  cpSync(join(process.cwd(), "scripts", "resolve-node22.sh"), join(release, "scripts", "resolve-node22.sh"));
   writeFileSync(join(release, "package.json"), '{"type":"module"}\n');
   writeFileSync(join(release, "dist", "scripts", "pipe-env-value.js"), [
     "const chunks=[];",
@@ -55,6 +56,12 @@ function invoke(command: string, args: string[] = []): { accounts: string[]; arg
     "writeFileSync(process.env.ACE_TEST_OUTPUT, JSON.stringify(process.argv.slice(2)));",
   ].join("\n"));
   const helper = join(root, "keychain-helper.sh");
+  const node22 = join(root, "node22");
+  writeFileSync(node22, [
+    "#!/bin/bash",
+    'if [[ "${1:-}" = --version ]]; then printf "v22.17.0\\n"; exit 0; fi',
+    `exec ${JSON.stringify(process.execPath)} "$@"`,
+  ].join("\n"), { mode: 0o700 });
   writeFileSync(helper, [
     "#!/bin/bash",
     "set -euo pipefail",
@@ -63,7 +70,7 @@ function invoke(command: string, args: string[] = []): { accounts: string[]; arg
   ].join("\n"), { mode: 0o700 });
   writeFileSync(join(appDirectory, "scheduler.conf"), [
     `KEYCHAIN_HELPER='${helper}'`,
-    `NODE_PATH='${process.execPath}'`,
+    `NODE_PATH='${node22}'`,
     "TWITTER_CLI_PATH='twitter'",
   ].join("\n"));
 

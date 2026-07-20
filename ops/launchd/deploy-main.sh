@@ -16,8 +16,7 @@ remote_main="$(git rev-parse origin/main)"
 [[ "$main_sha" = "$remote_main" ]] || { printf 'sha_not_remote_main\n' >&2; exit 1; }
 git cat-file -e "${main_sha}^{commit}"
 
-node_path="$(command -v node)"
-node_path="$(realpath "$node_path")"
+node_path="$("${repo_root}/scripts/resolve-node22.sh")"
 "$node_path" "$transaction_helper" verify "$transaction" >/dev/null
 rollback_exit() {
   local status="$1"
@@ -40,10 +39,16 @@ if [[ -e "$candidate" || -L "$candidate" ]]; then
   [[ -d "$candidate" && ! -L "$candidate" ]] || { printf 'release_path_invalid\n' >&2; exit 1; }
   "$node_path" "$integrity_helper" verify "$candidate" "$main_sha" >/dev/null
 else
+  node_bin_dir="$(dirname "$node_path")"
+  npm_cli="$(realpath "${node_bin_dir}/npm" 2>/dev/null)" || { printf 'node22_npm_not_found\n' >&2; exit 1; }
+  [[ -f "$npm_cli" ]] || { printf 'node22_npm_not_found\n' >&2; exit 1; }
   candidate_tmp="${releases_dir}/.${main_sha}.$$"
   mkdir "$candidate_tmp"
   git archive "$main_sha" | tar -x -C "$candidate_tmp"
-  (cd "$candidate_tmp" && npm ci && npm run build && npm run skill:validate)
+  (cd "$candidate_tmp" &&
+    PATH="${node_bin_dir}:$PATH" "$node_path" "$npm_cli" ci &&
+    PATH="${node_bin_dir}:$PATH" "$node_path" "$npm_cli" run build &&
+    PATH="${node_bin_dir}:$PATH" "$node_path" "$npm_cli" run skill:validate)
   "$node_path" "$integrity_helper" seal "$candidate_tmp" "$main_sha" >/dev/null
   "$node_path" "$integrity_helper" verify "$candidate_tmp" "$main_sha" >/dev/null
   mv "$candidate_tmp" "$candidate"
