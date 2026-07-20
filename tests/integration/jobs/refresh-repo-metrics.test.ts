@@ -187,15 +187,20 @@ describe("refreshRepoMetrics", () => {
     const store = new SnapshotStore(runtimePool);
     const base = { repositoryId, capturedAt: bucket, granularity: "hourly" as const,
       commits30d: null, prTotal: null, prOpen: null, prMerged: null, releasesCount: null,
-      issuesTotal: null, issuesOpen: null, issuesClosed: null, candidateBuckets: [] };
+      issuesTotal: null, issuesOpen: null, issuesClosed: null };
     await store.insert({ ...base, stars: 20, forks: 4,
+      candidateBuckets: ["age_1d_stars_10", "age_3d_stars_100"], candidateRuleVersion: "v2",
       collectedFields: { core: true, observed_at: "2026-07-19T12:50:00.000Z", source_job_run_id: "new" } });
     await store.insert({ ...base, stars: 10, forks: 2,
+      candidateBuckets: [], candidateRuleVersion: "v1",
       collectedFields: { core: true, observed_at: "2026-07-19T12:40:00.000Z", source_job_run_id: "old" } });
     expect((await runtimePool.query(
-      "select stars,forks,collected_fields from ace_hunter.repository_snapshots where repository_id=$1",
+      `select stars,forks,candidate_buckets,candidate_rule_version,collected_fields
+       from ace_hunter.repository_snapshots where repository_id=$1`,
       [repositoryId],
-    )).rows[0]).toEqual({ stars: "20", forks: "4", collected_fields: expect.objectContaining({
+    )).rows[0]).toEqual({ stars: "20", forks: "4",
+      candidate_buckets: ["age_1d_stars_10", "age_3d_stars_100"], candidate_rule_version: "v2",
+      collected_fields: expect.objectContaining({
       observed_at: "2026-07-19T12:50:00.000Z", source_job_run_id: "new",
     }) });
   });

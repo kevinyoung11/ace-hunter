@@ -90,8 +90,14 @@ export class SnapshotStore {
          issues_open=case when excluded.aux_metrics_captured_at is not null and (repository_snapshots.aux_metrics_captured_at is null or excluded.aux_metrics_captured_at>=repository_snapshots.aux_metrics_captured_at) then excluded.issues_open else repository_snapshots.issues_open end,
          issues_closed=case when excluded.aux_metrics_captured_at is not null and (repository_snapshots.aux_metrics_captured_at is null or excluded.aux_metrics_captured_at>=repository_snapshots.aux_metrics_captured_at) then excluded.issues_closed else repository_snapshots.issues_closed end,
          aux_metrics_captured_at=case when excluded.aux_metrics_captured_at is not null and (repository_snapshots.aux_metrics_captured_at is null or excluded.aux_metrics_captured_at>=repository_snapshots.aux_metrics_captured_at) then excluded.aux_metrics_captured_at else repository_snapshots.aux_metrics_captured_at end,
-         candidate_buckets=case when excluded.candidate_rule_version is null then repository_snapshots.candidate_buckets else excluded.candidate_buckets end,
-         candidate_rule_version=coalesce(excluded.candidate_rule_version,repository_snapshots.candidate_rule_version),
+         candidate_buckets=case when repository_snapshots.collected_fields?'observed_at' and
+           (not excluded.collected_fields?'observed_at' or excluded.collected_fields->>'observed_at'<repository_snapshots.collected_fields->>'observed_at')
+           then repository_snapshots.candidate_buckets
+           when excluded.candidate_rule_version is null then repository_snapshots.candidate_buckets else excluded.candidate_buckets end,
+         candidate_rule_version=case when repository_snapshots.collected_fields?'observed_at' and
+           (not excluded.collected_fields?'observed_at' or excluded.collected_fields->>'observed_at'<repository_snapshots.collected_fields->>'observed_at')
+           then repository_snapshots.candidate_rule_version
+           else coalesce(excluded.candidate_rule_version,repository_snapshots.candidate_rule_version) end,
          collected_fields=repository_snapshots.collected_fields || excluded.collected_fields ||
            case when repository_snapshots.collected_fields?'observed_at' and
              (not excluded.collected_fields?'observed_at' or excluded.collected_fields->>'observed_at'<repository_snapshots.collected_fields->>'observed_at')
