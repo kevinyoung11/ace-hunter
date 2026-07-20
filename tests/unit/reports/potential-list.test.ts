@@ -36,8 +36,8 @@ describe("potential repository Markdown", () => {
 
     expect(markdown).toContain("筛选规则：全部（1 天 / 3 天）");
     expect(markdown).toContain("命中规则：1 天（24 小时内且 Star ≥ 10）、3 天（72 小时内且 Star ≥ 100）");
-    expect(markdown).toContain("[GitHub](https://github.com/acme/rocket)");
-    expect(markdown).toContain("[演示网页](https://rocket.example/)");
+    expect(markdown).toContain("[GitHub](<https://github.com/acme/rocket>)");
+    expect(markdown).toContain("[演示网页](<https://rocket.example/>)");
     expect(markdown).toContain("数据捕获时间：2026-07-19T23:55:00.000Z");
     expect(markdown.endsWith("\n")).toBe(true);
     expect(markdown.endsWith("\n\n")).toBe(false);
@@ -50,6 +50,27 @@ describe("potential repository Markdown", () => {
     expect(markdown).toContain("当前没有符合条件的潜力仓库。");
     expect(markdown.endsWith("\n")).toBe(true);
     expect(markdown.endsWith("\n\n")).toBe(false);
+  });
+
+  it("keeps untrusted metadata on one escaped line and uses safe link destinations", () => {
+    const markdown = renderPotentialList({
+      ...populated,
+      items: [{
+        ...populated.items[0],
+        fullName: "acme/#rocket*",
+        description: "first line\n## injected *bold* [link](x) | cell",
+        owner: "owner_*",
+        repositoryUrl: "https://github.com/acme/rocket_(fast)",
+        homepageUrl: "https://rocket.example/demo_(one)",
+      }],
+    });
+
+    expect(markdown).toContain("## 1. acme/\\#rocket\\*");
+    expect(markdown).toContain("- 简介：first line \\#\\# injected \\*bold\\* \\[link\\]\\(x\\) \\| cell");
+    expect(markdown).toContain("- 作者：owner\\_\\*");
+    expect(markdown).toContain("[GitHub](<https://github.com/acme/rocket_(fast)>)");
+    expect(markdown).toContain("[演示网页](<https://rocket.example/demo_(one)>)");
+    expect(markdown).not.toContain("\n## injected");
   });
 });
 
@@ -66,7 +87,7 @@ describe("potential repository query boundary", () => {
           repo_url: "https://github.com/owner/bad",
           homepage_url: null,
           github_created_at: new Date("2026-07-19T23:00:00.000Z"),
-          captured_at: new Date("2026-07-19T23:30:00.000Z"),
+          effective_observed_at: new Date("2026-07-19T23:30:00.000Z"),
           stars: "-1",
           forks: "0",
         }],

@@ -47,7 +47,7 @@ interface PotentialRow {
   repo_url: string;
   homepage_url: string | null;
   github_created_at: Date;
-  captured_at: Date;
+  effective_observed_at: Date;
   stars: string;
   forks: string | null;
 }
@@ -66,16 +66,17 @@ export async function loadPotentialRepositories(
   const earliestCreatedAt = new Date(options.now.getTime() - maximumCandidateAgeMs);
   const result = await pool.query<PotentialRow>(`select
       r.id repository_id,r.name,r.full_name,r.description,r.owner_login,r.repo_url,r.homepage_url,
-      r.github_created_at,snapshot.captured_at,snapshot.stars,snapshot.forks
+      r.github_created_at,snapshot.effective_observed_at,snapshot.stars,snapshot.forks
     from ace_hunter.repositories r
     join lateral (
-      select s.captured_at,s.stars,s.forks
+      select s.stars,s.forks,
+        coalesce(nullif(s.collected_fields->>'observed_at','')::timestamptz,s.created_at) effective_observed_at
       from ace_hunter.repository_snapshots s
       where s.repository_id=r.id
         and s.captured_at <= $1
         and s.created_at <= $1
         and coalesce(nullif(s.collected_fields->>'observed_at','')::timestamptz,s.created_at) <= $1
-      order by s.captured_at desc,s.id desc
+      order by effective_observed_at desc,s.captured_at desc,s.created_at desc,s.id desc
       limit 1
     ) snapshot on true
     where r.status='active'
@@ -116,20 +117,20 @@ export function renderPotentialList(value: PotentialList): string {
 
   value.items.forEach((item, index) => {
     lines.push(
-      `## ${index + 1}. ${item.fullName}`,
+      `## ${index + 1}. ${markdownText(item.fullName)}`,
       "",
       `- 命中规则：${item.matchedRules.map(matchedRuleLabel).join("、")}`,
-      `- 简介：${item.description ?? "—"}`,
-      `- 作者：${item.owner}`,
+      `- 简介：${item.description === null ? "—" : markdownText(item.description) || "—"}`,
+      `- 作者：${markdownText(item.owner)}`,
       `- 创建时间：${item.createdAt}`,
       `- 仓库年龄：${formatNumber(item.ageHours)} 小时`,
       `- Star：${item.stars}`,
       `- 平均每小时 Star：${formatNumber(item.starsPerHour)}`,
       `- Fork：${item.forks ?? "—"}`,
       `- 数据捕获时间：${item.capturedAt}`,
-      `- [GitHub](${item.repositoryUrl})`,
+      `- [GitHub](<${item.repositoryUrl}>)`,
     );
-    if (item.homepageUrl !== null) lines.push(`- [演示网页](${item.homepageUrl})`);
+    if (item.homepageUrl !== null) lines.push(`- [演示网页](<${item.homepageUrl}>)`);
     lines.push("");
   });
   return lines.join("\n").trimEnd() + "\n";
@@ -137,7 +138,7 @@ export function renderPotentialList(value: PotentialList): string {
 
 function mapPotentialRow(row: PotentialRow, now: Date): PotentialRepository {
   const createdAt = requireDate(row.github_created_at, "createdAt");
-  const capturedAt = requireDate(row.captured_at, "capturedAt");
+  const capturedAt = requireDate(row.effective_observed_at, "capturedAt");
   const stars = toSafeCount(row.stars, "stars");
   const forks = row.forks === null ? null : toSafeCount(row.forks, "forks");
   const ageHours = (now.getTime() - createdAt.getTime()) / 3_600_000;
@@ -212,4 +213,8 @@ function matchedRuleLabel(rule: Exclude<PotentialRule, "all">): string {
 
 function formatNumber(value: number): string {
   return Number.isInteger(value) ? String(value) : value.toFixed(2).replace(/0+$/, "").replace(/\.$/, "");
+}
+
+function markdownText(value: string): string {
+  return value.trim().replace(/\s+/gu, " ").replace(/([\\`*_[\]{}()#+\-.!|<>])/g, "\\$1");
 }

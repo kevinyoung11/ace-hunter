@@ -100,6 +100,30 @@ describe("potential repository read model", () => {
     })]);
   });
 
+  it("selects the latest observed fact instead of the latest capture bucket", async () => {
+    const seeded = await seed("observed-order", "2026-07-19T23:00:00.000Z", 10, {
+      capturedAt: "2026-07-19T22:00:00.000Z",
+    });
+    await runtimePool.query(`insert into ace_hunter.repository_snapshots
+      (repository_id,captured_at,granularity,stars,forks,collected_fields,created_at)
+      values
+        ($1,'2026-07-19T23:00:00Z','hourly',100,8,
+          '{"observed_at":"2026-07-19T23:50:00.000Z"}','2026-07-19T23:50:00Z'),
+        ($1,'2026-07-19T23:30:00Z','realtime',9,1,
+          '{"observed_at":"2026-07-19T23:30:00.000Z"}','2026-07-19T23:30:00Z')`,
+    [seeded.repositoryId]);
+
+    const result = await loadPotentialRepositories(runtimePool, { now, rule: "all", limit: null });
+
+    expect(result.items).toEqual([expect.objectContaining({
+      name: "observed-order",
+      stars: 100,
+      forks: 8,
+      capturedAt: "2026-07-19T23:50:00.000Z",
+      matchedRules: ["1d", "3d"],
+    })]);
+  });
+
   it("filters by rule, sorts deterministically and applies a per-request limit", async () => {
     await seed("dual", "2026-07-19T23:00:00.000Z", 100);
     await seed("z-tie", "2026-07-19T22:00:00.000Z", 20);
