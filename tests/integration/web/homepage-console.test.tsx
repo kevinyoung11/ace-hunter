@@ -60,6 +60,17 @@ describe("product and console routes", () => {
     expect(screen.getByRole("link", { name: "打开控制台" }).getAttribute("href")).toBe("/console");
   });
 
+  it("shows an explicit unavailable state when loading today's trend fails", async () => {
+    trending.mockRejectedValue(new Error("database unavailable"));
+
+    render(await Homepage());
+
+    expect(trending).toHaveBeenCalledWith("daily");
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("找到值得安装的 Skill");
+    expect(screen.getByText("趋势榜暂时无法加载，请稍后重试。")).not.toBeNull();
+    expect(screen.getByRole("link", { name: "打开控制台" }).getAttribute("href")).toBe("/console");
+  });
+
   it("keeps the report dashboard at /console with console navigation links", async () => {
     vi.stubGlobal("fetch", vi.fn(() => new Promise(() => {})));
     const route = "../../../app/console/page";
