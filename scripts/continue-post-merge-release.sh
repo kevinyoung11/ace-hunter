@@ -121,7 +121,8 @@ chmod 600 "${smoke_dir}/skill-weekly.json" "${smoke_dir}/skill-potential.json"
   "${smoke_dir}/skill-potential.json" >/dev/null
 
 : "${ACCEPTANCE_STARTED_AT:?ACCEPTANCE_STARTED_AT is required}"
-export KICKSTART_BOUNDARY="$kickstart_boundary" ACCEPTANCE_RUN_IDS_FILE="$acceptance_json" MAIN_SHA="$main_sha"
+export KICKSTART_BOUNDARY="$kickstart_boundary" ACCEPTANCE_RUN_IDS_FILE="$acceptance_json" \
+  MAIN_SHA="$main_sha" SIGNAL_SMOKE_DIR="$smoke_dir"
 ACE_HUNTER_ENV_FILE="$live_env" node --import tsx scripts/post-merge-acceptance.ts
 git -C "$repo_root" fetch --quiet origin main
 [[ "$(git -C "$repo_root" rev-parse origin/main)" = "$main_sha" ]]

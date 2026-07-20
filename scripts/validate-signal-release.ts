@@ -57,6 +57,10 @@ try {
     all.kind !== "trending_lists" || all.lists.length !== 3 ||
     !all.lists.every((list) => list.status === "available")
   )) throw new Error("fresh_trending_unavailable");
+  if (mode === "require-fresh" && [daily, weekly, monthly, all]
+      .some((value) => value.lists.some((list) => list.status === "available" && list.stale))) {
+    throw new Error("fresh_trending_stale");
+  }
   if (paths.length === 7) {
     const skillWeekly = await parseTrending(skillWeeklyPath, "weekly");
     const skillPotential = await parsePotential(skillPotentialPath);
@@ -67,6 +71,8 @@ try {
         skillWeekly.lists.length !== 1 || skillWeekly.lists[0]?.status !== "available")) {
       throw new Error("fresh_skill_trending_unavailable");
     }
+    if (mode === "require-fresh" && skillWeekly.lists.some((list) =>
+      list.status === "available" && list.stale)) throw new Error("fresh_trending_stale");
     if (JSON.stringify(canonicalPotential(skillPotential)) !== JSON.stringify(canonicalPotential(potential))) {
       throw new Error("skill_potential_mismatch");
     }

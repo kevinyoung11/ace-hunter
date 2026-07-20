@@ -78,6 +78,7 @@ describe("post-merge database facts", () => {
 
   it("requires a terminal attributable complete all-language batch for every period", async () => {
     const acceptance = await readFile("scripts/post-merge-acceptance.ts", "utf8");
+    const continuation = await readFile("scripts/continue-post-merge-release.sh", "utf8");
     for (const semantic of [
       "trending.language='all'",
       "count(trending.job_run_id)=count(*)",
@@ -93,6 +94,10 @@ describe("post-merge database facts", () => {
     expect(acceptance).toContain('["daily", "monthly", "weekly"]');
     expect(acceptance).not.toContain("trending.captured_at >= $1");
     expect(acceptance).toContain("run.completed_at >= $1");
+    expect(acceptance).toContain("select distinct candidate.period,candidate.captured_at");
+    expect(acceptance).toContain("verifyAcceptedTrendingOutput");
+    expect(acceptance).toContain('expectedSmokeDir: join(dirname(runsPath), "release-rollback", "continuation-smoke")');
+    expect(continuation).toContain('SIGNAL_SMOKE_DIR="$smoke_dir"');
   });
 
   it("keeps production history read-only during fact verification", async () => {

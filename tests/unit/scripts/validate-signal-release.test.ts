@@ -93,6 +93,20 @@ it("accepts all three visible lists in fresh mode", async () => {
   await expect(run(files, "require-fresh")).resolves.toMatchObject({ stdout: "signal_release_validation_passed\n" });
 });
 
+it("rejects stale available lists in fresh mode", async () => {
+  const files = await writeFixtureSet({ allPeriodsAvailable: true });
+  for (const path of [files.daily, files.weekly, files.monthly, files.all, files.skillWeekly]) {
+    const value = JSON.parse(await readFile(path, "utf8")) as {
+      lists: Array<Record<string, unknown>>;
+    };
+    for (const list of value.lists) list.stale = true;
+    await writeJson(path, value);
+  }
+  await expect(run(files, "require-fresh")).rejects.toMatchObject({
+    stderr: expect.stringContaining("fresh_trending_stale"),
+  });
+});
+
 it("rejects a default potential smoke that does not report the all rule", async () => {
   const files = await writeFixtureSet();
   for (const path of [files.potential, files.skillPotential]) {

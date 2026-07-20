@@ -1,10 +1,12 @@
 import { execFile as execFileCallback } from "node:child_process";
 import { promisify } from "node:util";
 import { readFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { parse } from "dotenv";
 import { Pool } from "pg";
 import { z } from "zod";
 import { loadRuntimeConfig } from "../src/config/load-config.js";
+import { verifyAcceptedTrendingOutput } from "./accepted-trending-output.js";
 
 const execFile = promisify(execFileCallback);
 const runSchema = z.array(z.object({
@@ -15,6 +17,7 @@ const runSchema = z.array(z.object({
 const startedAt = requiredDate("ACCEPTANCE_STARTED_AT");
 const kickstartBoundary = requiredDate("KICKSTART_BOUNDARY");
 const runsPath = requiredAbsolute("ACCEPTANCE_RUN_IDS_FILE");
+const smokeDir = requiredAbsolute("SIGNAL_SMOKE_DIR");
 const mainSha = required("MAIN_SHA", /^[a-f0-9]{40}$/u);
 const expectedRuns = runSchema.parse(JSON.parse(await readFile(runsPath, "utf8")));
 const pool = new Pool({ connectionString: loadRuntimeConfig(process.env).runtimeDatabaseUrl });
@@ -71,7 +74,7 @@ try {
   }
   const trendingRun = expectedRuns.find((item) => item.workflow === "trending.yml");
   if (trendingRun === undefined) throw new Error("missing_complete_trending_batch");
-  const completeTrending = await pool.query<{ period: string }>(`with candidate_batches as (
+  const completeTrending = await pool.query<{ period: string; captured_at: Date }>(`with candidate_batches as (
       select trending.period,trending.captured_at,
         min(trending.job_run_id::text)::uuid job_run_id,count(*)::int row_count
       from ace_hunter.github_trending_snapshots trending
@@ -82,7 +85,7 @@ try {
         and count(distinct trending.job_run_id)=1
         and bool_and(trending.collection_status='success')
     )
-    select distinct candidate.period
+    select distinct candidate.period,candidate.captured_at
     from candidate_batches candidate
     join ace_hunter.job_runs run on run.id=candidate.job_run_id
     where run.job_name='collect_github_trending'
@@ -99,6 +102,11 @@ try {
       JSON.stringify(["daily", "monthly", "weekly"])) {
     throw new Error("missing_complete_trending_batch");
   }
+  await verifyAcceptedTrendingOutput({
+    smokeDir,
+    expectedSmokeDir: join(dirname(runsPath), "release-rollback", "continuation-smoke"),
+    batches: completeTrending.rows.map((row) => ({ period: row.period, capturedAt: row.captured_at })),
+  });
   const outputs = await pool.query<{ output_type: string }>(`select output_type from ace_hunter.analysis_outputs
     where (output_type='daily_report' and completed_at >= $1)
        or (output_type='realtime_observation' and created_at >= $1)`, [startedAt]);
