@@ -1,7 +1,7 @@
 name: collect GitHub trending
 
 on:
-  schedule: [{ cron: '7 */4 * * *' }]
+  schedule: [{ cron: '7 0 * * *' }]
   workflow_dispatch:
 
 permissions:
@@ -13,6 +13,10 @@ concurrency:
 
 jobs:
   collect:
+    strategy:
+      fail-fast: false
+      matrix:
+        period: [daily, weekly, monthly]
     runs-on: ubuntu-latest
     environment: ace-hunter-production
     timeout-minutes: 20
@@ -28,21 +32,9 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
-      - name: Daily ranking
+      - name: Collect ${{ matrix.period }} ranking
         run: >-
-          node dist/src/cli/index.js job collect_github_trending --period daily
-          --orchestrator-run-id '${{ github.run_id }}'
-          --orchestrator-run-attempt '${{ github.run_attempt }}'
-          --orchestrator-workflow 'trending.yml'
-      - name: Weekly ranking
-        run: >-
-          node dist/src/cli/index.js job collect_github_trending --period weekly
-          --orchestrator-run-id '${{ github.run_id }}'
-          --orchestrator-run-attempt '${{ github.run_attempt }}'
-          --orchestrator-workflow 'trending.yml'
-      - name: Monthly ranking
-        run: >-
-          node dist/src/cli/index.js job collect_github_trending --period monthly
+          node dist/src/cli/index.js job collect_github_trending --period '${{ matrix.period }}'
           --orchestrator-run-id '${{ github.run_id }}'
           --orchestrator-run-attempt '${{ github.run_attempt }}'
           --orchestrator-workflow 'trending.yml'

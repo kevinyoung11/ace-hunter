@@ -1,4 +1,4 @@
 interface:
   display_name: "Ace Hunter"
-  short_description: "发现、分析、实时观察并持续关注有潜力的 GitHub 产品"
-  default_prompt: "使用 $ace-hunter 查看今日值得关注的项目。"
+  short_description: "查看 GitHub 日周月榜、潜力项目，并分析、观察或关注产品"
+  default_prompt: "使用 $ace-hunter 查看 GitHub 日榜和符合 1d/3d 规则的潜力项目。"

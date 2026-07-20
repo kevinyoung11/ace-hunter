@@ -19,12 +19,8 @@ const workflowExpectations = {
     commands: ["discover_github_candidates"],
   },
   "trending.yml": {
-    cron: "7 */4 * * *",
-    commands: [
-      "collect_github_trending --period daily",
-      "collect_github_trending --period weekly",
-      "collect_github_trending --period monthly",
-    ],
+    cron: "7 0 * * *",
+    commands: ["collect_github_trending --period '${{ matrix.period }}'"],
   },
   "refresh-metrics.yml": {
     cron: "23 * * * *",
@@ -66,6 +62,18 @@ describe("hosted production schedules", () => {
     });
   }
 
+  it("runs each Trending period as an independent daily matrix child", async () => {
+    const yaml = await readFile(".github/workflows/trending.yml", "utf8");
+
+    expect(yaml).toContain("strategy:\n      fail-fast: false");
+    expect(yaml).toMatch(/matrix:\s+period:\s*\[daily, weekly, monthly\]/u);
+    expect(yaml.match(/job collect_github_trending --period/gu)).toHaveLength(1);
+    expect(yaml).toContain("job collect_github_trending --period '${{ matrix.period }}'");
+    for (const fixedPeriod of ["daily", "weekly", "monthly"]) {
+      expect(yaml).not.toContain(`job collect_github_trending --period ${fixedPeriod}`);
+    }
+  });
+
   it("keeps X manual in Actions and runs the complete X pipeline with one attribution", async () => {
     const yaml = await readFile(".github/workflows/collect-x.yml", "utf8");
 
@@ -84,6 +92,35 @@ describe("hosted production schedules", () => {
     expect(yaml.match(/--orchestrator-run-attempt '\$\{\{ github\.run_attempt \}\}'/gu)).toHaveLength(3);
     expect(yaml.match(/--orchestrator-workflow 'collect-x\.yml'/gu)).toHaveLength(3);
   });
+});
+
+it("documents direct deployment-managed Trending and potential routes", async () => {
+  const skill = await readFile("skills/ace-hunter/SKILL.md", "utf8");
+  const manifest = await readFile("skills/ace-hunter/agents/openai.yaml", "utf8");
+  const executable = `"$HOME/Library/Application Support/AceHunter/bin/ace-hunter"`;
+
+  for (const period of ["daily", "weekly", "monthly", "all"]) {
+    expect(skill).toContain(`${executable} trending ${period}`);
+  }
+  for (const rule of ["all", "1d", "3d"]) {
+    expect(skill).toContain(`${executable} potential --rule ${rule}`);
+  }
+  expect(skill).toContain("默认 Top 20");
+  expect(skill).toContain("--limit all");
+  expect(skill).toContain("不得改用 `today`");
+  expect(skill).toContain("source URL");
+  expect(skill).toContain("榜单采集时间");
+  expect(skill).toContain("Star 采集时间");
+  for (const state of ["stale", "available", "unavailable", "not_found"]) {
+    expect(skill).toContain(`\`${state}\``);
+  }
+  expect(skill).toContain("规则标签");
+  expect(skill).toContain("X");
+  expect(skill).toContain("不能解释成零讨论");
+  expect(skill).toMatch(/^description: .*GitHub 日榜、周榜、月榜、Trending、潜力项目/mu);
+  expect(manifest).toMatch(/^ {2}display_name: "[^"]+"$/mu);
+  expect(manifest).toMatch(/^ {2}short_description: "[^"]+"$/mu);
+  expect(manifest).toMatch(/^ {2}default_prompt: "[^"]*\$ace-hunter[^"]*"$/mu);
 });
 
 it("runs every quality gate against PostgreSQL 14 in CI", async () => {
