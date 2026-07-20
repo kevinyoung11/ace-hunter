@@ -49,7 +49,7 @@ V1 只稳定交付两个独立、事实型能力：
 
 超过边界 1 毫秒、9 Star 或 99 Star 均不满足相应规则。一个仓库可以同时命中两条规则。
 
-发现 Job 仍每 6 小时运行一次，搜索窗口只保留上述两条规则。新 Snapshot 写入 `candidate_rule_version='v2'`。指标刷新必须用最新 Repository 创建时间与 Star 重新计算 v2 标签，不能复制旧 v1 provenance。报告候选先读取 72 小时最大窗口内的事实，再调用共享分类函数，避免在 SQL 中复制阈值。
+发现 Job 仍每 6 小时运行一次，搜索窗口只保留上述两条规则。新 Snapshot 写入 `candidate_rule_version='v2'`。指标刷新必须用最新 Repository 创建时间与 Star 重新计算 v2 标签，不能复制旧 v1 provenance；同一小时发生乱序响应时，候选标签与 Star 必须使用同一个 `observed_at` 新鲜度判定，较旧响应不能覆盖较新事实。报告候选先读取 72 小时最大窗口内的事实，再调用共享分类函数，避免在 SQL 中复制阈值。
 
 ### 排除条件
 

@@ -106,7 +106,7 @@ expect(result.items.map((item) => item.fullName)).toEqual(["owner/fast", "owner/
 expect(result.items[0].matchedRules).toEqual(["1d", "3d"]);
 ```
 
-Seed exact 24h/72h boundaries, 9/10/99/100 Stars, one-millisecond-old exclusions, dual matches, future creation, forks/archives/mirrors, future snapshots and deterministic ties. Add pure renderer assertions for source links, rule labels, timestamps, empty state and newline termination. Add refresh regression coverage proving a prior v1 Snapshot becomes freshly recomputed v2 provenance instead of being copied.
+Seed exact 24h/72h boundaries, 9/10/99/100 Stars, one-millisecond-old exclusions, dual matches, future creation, forks/archives/mirrors, future snapshots and deterministic ties. Add pure renderer assertions for source links, rule labels, timestamps, empty state and newline termination. Add refresh regression coverage proving a prior v1 Snapshot becomes freshly recomputed v2 provenance instead of being copied, and that an older same-hour Core response cannot overwrite the candidate provenance attached to a newer Star observation.
 
 - [ ] **Step 2: Run tests and verify RED**
 
@@ -143,7 +143,7 @@ export async function loadPotentialRepositories(pool: Pool, options: PotentialLi
 export function renderPotentialList(value: PotentialList): string;
 ```
 
-Read each active primary Repository's latest cutoff-safe Snapshot, call `classifyCandidate`, compute `starsPerHour = stars / Math.max(ageHours, 1)`, filter by rule, then sort by velocity, Stars, creation time and full name. Reject invalid dates, rules, limits, negative/unsafe counts and future-created repositories. Metric refresh recomputes `candidateBuckets` and `candidateRuleVersion` from the current GitHub metadata plus core Star count on every new Snapshot.
+Read each active primary Repository's latest cutoff-safe Snapshot, call `classifyCandidate`, compute `starsPerHour = stars / Math.max(ageHours, 1)`, filter by rule, then sort by velocity, Stars, creation time and full name. Reject invalid dates, rules, limits, negative/unsafe counts and future-created repositories. Metric refresh recomputes `candidateBuckets` and `candidateRuleVersion` from the current GitHub metadata plus core Star count on every new Snapshot, and persists those fields under the same `observed_at` freshness guard as the Core counters.
 
 - [ ] **Step 4: Run tests and verify GREEN**
 
