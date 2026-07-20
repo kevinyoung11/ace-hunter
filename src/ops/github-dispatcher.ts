@@ -1,7 +1,7 @@
 import type { JobCommand } from "../db/stores/job-command-store.js";
-import type { JobDispatcher } from "../cli/job-dispatcher.js";
-import type { JobInput } from "../jobs/job-runner.js";
-import { JOB_CATALOG, type Executor, type JobName } from "./job-catalog.js";
+import type { JobDispatcher } from "../cli/job-dispatcher";
+import type { JobInput } from "../jobs/job-runner";
+import { JOB_CATALOG, type Executor, type JobName } from "./job-catalog";
 
 export interface GitHubDispatchCommand { workflow: string; jobName: JobName; commandId: string }
 export interface GitHubDispatcherOptions { owner: string; repo: string; token: string; ref?: string; request?: typeof fetch }

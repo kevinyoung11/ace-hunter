@@ -1,5 +1,5 @@
-import type { JobCommand } from "../db/stores/job-command-store.js";
-import type { JobName, Executor } from "./job-catalog.js";
+import type { JobCommand } from "../db/stores/job-command-store";
+import type { JobName, Executor } from "./job-catalog";
 export interface SchedulerDefinition { name: JobName; executor: Executor; capability: string; workflow: string; enabled: boolean; pausedAt?: Date|null; schedule: { minute: number|string; hour: number|string }; parameters: Record<string, unknown> }
 export interface SchedulerStore { now(): Promise<Date>; definitions(): Promise<SchedulerDefinition[]>; enqueue(input: { jobName: string; parameters: Record<string, unknown>; scheduledFor: Date; idempotencyKey: string }): Promise<JobCommand>; markDispatchFailed?(commandId: string, code: string): Promise<void> }
 export interface ScheduledDispatch { id: string; workflow: string; jobName: JobName; commandId: string }
