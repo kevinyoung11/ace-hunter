@@ -49,8 +49,14 @@ case "$1" in
     [[ "$FAKE_LAUNCHCTL_BOOTOUT_FAILS" = true ]] && exit 1
     printf 'false' >"$FAKE_LAUNCHCTL_LOADED_STATE"
     ;;
-  bootstrap) printf 'true' >"$FAKE_LAUNCHCTL_LOADED_STATE";;
-  enable) printf 'false' >"$FAKE_LAUNCHCTL_DISABLED_STATE";;
+  bootstrap)
+    [[ -f "$FAKE_LAUNCHCTL_DISABLED_STATE" && "$(cat "$FAKE_LAUNCHCTL_DISABLED_STATE")" = true ]] && exit 5
+    printf 'true' >"$FAKE_LAUNCHCTL_LOADED_STATE"
+    ;;
+  enable)
+    [[ "$FAKE_LAUNCHCTL_ENABLE_FAILS" = true ]] && exit 7
+    printf 'false' >"$FAKE_LAUNCHCTL_DISABLED_STATE"
+    ;;
   disable) printf 'true' >"$FAKE_LAUNCHCTL_DISABLED_STATE";;
 esac
 `, { mode: 0o755 });
@@ -129,6 +135,39 @@ it("restores a prior plist that was unloaded and disabled without starting it", 
   ]);
 });
 
+it("temporarily enables a loaded disabled prior service before bootstrap, then restores disabled", async () => {
+  const agent = join(home, "Library", "LaunchAgents", "com.kevinyoung.ace-hunter.collect-x.plist");
+  await writeFile(agent, "prior-loaded-disabled\n", { mode: 0o600 });
+  await run("begin", { loaded: "true", disabled: "true" });
+  await writeFile(agent, "new\n", { mode: 0o600 });
+
+  await run("rollback", { loaded: "true", disabled: "true" });
+
+  expect(await readFile(agent, "utf8")).toBe("prior-loaded-disabled\n");
+  expect(await launchctlCalls()).toEqual([
+    `print gui/${currentUid}/com.kevinyoung.ace-hunter.collect-x`,
+    `print-disabled gui/${currentUid}`,
+    `bootout gui/${currentUid} ${agent}`,
+    `print gui/${currentUid}/com.kevinyoung.ace-hunter.collect-x`,
+    `enable gui/${currentUid}/com.kevinyoung.ace-hunter.collect-x`,
+    `bootstrap gui/${currentUid} ${agent}`,
+    `disable gui/${currentUid}/com.kevinyoung.ace-hunter.collect-x`,
+    `print gui/${currentUid}/com.kevinyoung.ace-hunter.collect-x`,
+    `print-disabled gui/${currentUid}`,
+  ]);
+});
+
+it("propagates a temporary enable failure without claiming rollback completed", async () => {
+  const agent = join(home, "Library", "LaunchAgents", "com.kevinyoung.ace-hunter.collect-x.plist");
+  await writeFile(agent, "prior\n", { mode: 0o600 });
+  await run("begin", { loaded: "true", disabled: "true" });
+
+  await expect(run("rollback", { loaded: "true", disabled: "true", enableFails: true }))
+    .rejects.toMatchObject({ stderr: expect.stringContaining("release_transaction_launchd_restore_failed") });
+  const state = JSON.parse(await readFile(join(tx, "state.json"), "utf8"));
+  expect(state.status).toBe("active");
+});
+
 it("removes a first install without inventing prior launchd state", async () => {
   await run("begin", { loaded: "false", disabled: "absent" });
   const agent = join(home, "Library", "LaunchAgents", "com.kevinyoung.ace-hunter.collect-x.plist");
@@ -183,6 +222,7 @@ function run(
     loaded: "true" | "false" | "error";
     disabled: "true" | "false" | "absent" | "error";
     bootoutFails?: boolean;
+    enableFails?: boolean;
   } = {
     loaded: "false", disabled: "absent",
   },
@@ -202,6 +242,7 @@ function run(
       FAKE_LAUNCHCTL_LOADED_STATE: join(root, "launchctl-loaded.state"),
       FAKE_LAUNCHCTL_DISABLED_STATE: join(root, "launchctl-disabled.state"),
       FAKE_LAUNCHCTL_BOOTOUT_FAILS: String(launchd.bootoutFails === true),
+      FAKE_LAUNCHCTL_ENABLE_FAILS: String(launchd.enableFails === true),
     },
   });
 }

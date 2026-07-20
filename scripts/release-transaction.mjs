@@ -102,6 +102,10 @@ async function rollback() {
   }
   if (state.artifacts.agent.state === "file") {
     if (state.launchd.loaded) {
+      if (state.launchd.disabledOverride === true) {
+        const enabled = spawnSync("launchctl", ["enable", `${domain}/${agentLabel}`], { stdio: "ignore" });
+        if (enabled.status !== 0) throw new Error("release_transaction_launchd_restore_failed");
+      }
       const bootstrap = spawnSync("launchctl", ["bootstrap", domain, state.paths.agent], { stdio: "ignore" });
       if (bootstrap.status !== 0) throw new Error("release_transaction_launchd_restore_failed");
     }
