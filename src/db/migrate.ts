@@ -157,7 +157,7 @@ async function main(): Promise<void> {
   try {
     const capability = await pool.query<{ allowed: boolean }>(
       `select exists(select 1 from pg_catalog.pg_namespace n cross join lateral aclexplode(n.nspacl) a join pg_catalog.pg_roles r on r.oid=a.grantee where n.nspname='auth' and r.rolname='ace_hunter_owner' and a.privilege_type='USAGE') and exists(select 1 from pg_catalog.pg_attribute col join pg_catalog.pg_class c on c.oid=col.attrelid join pg_catalog.pg_namespace n on n.oid=c.relnamespace cross join lateral aclexplode(col.attacl) a join pg_catalog.pg_roles r on r.oid=a.grantee where n.nspname='auth' and c.relname='users' and col.attname='id' and r.rolname='ace_hunter_owner' and a.privilege_type='REFERENCES') allowed`,
-    );
+    ).catch(() => ({ rows: [{ allowed: false }] } as { rows: Array<{ allowed: boolean }> }));
     if (capability.rows[0]?.allowed) await migrate(pool, { expectedChecksum: config.migrationSha256 });
     else {
       const admin = new Pool({ connectionString: loadAdminConfig(process.env).adminDatabaseUrl });
