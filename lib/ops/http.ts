@@ -16,4 +16,4 @@ export function guard(req: Request, mutate = false): { response?: NextResponse; 
 }
 export function output(value: unknown, id: string, status = 200): NextResponse { return NextResponse.json(value, { status, headers: { "cache-control": "no-store", "x-correlation-id": id } }); }
 export function fail(code: string, status: number, id: string): NextResponse { return output({ code, correlation_id: id }, id, status); }
-export async function json(req: Request): Promise<Record<string, unknown>> { const value = await req.json(); if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("invalid_json"); return value as Record<string, unknown>; }
+export async function json(req: Request): Promise<Record<string, unknown>> { const raw = await req.arrayBuffer(); if (raw.byteLength > 64 * 1024) throw new Error("request_too_large"); let value: unknown; try { value = JSON.parse(new TextDecoder().decode(raw)); } catch { throw new Error("invalid_json"); } if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("invalid_json"); return value as Record<string, unknown>; }
