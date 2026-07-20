@@ -57,9 +57,9 @@ describe("MacXWorker", () => {
   ])("rejects non-local/X command %s/%s", async (executor, capability) => {
     const fixture = deps({ service: { claim: vi.fn(async () => command({ executor: executor as Executor, capability })) } });
     const worker = new MacXWorker(fixture.dependencies);
-    await expect(worker.tick()).rejects.toMatchObject({ code: "worker_command_rejected" });
+    await expect(worker.tick()).resolves.toMatchObject({ processed: true, status: "failed" });
     expect(fixture.dispatcher).not.toHaveBeenCalled();
-    expect(fixture.service.complete).not.toHaveBeenCalled();
+    expect(fixture.service.complete).toHaveBeenCalled();
   });
 
   it("marks command failed with a redacted stable error when dispatch fails", async () => {
@@ -72,12 +72,12 @@ describe("MacXWorker", () => {
 
   it("rejects downstream X commands without a parent lineage reference", async () => {
     const fixture = deps({ service: { claim: vi.fn(async () => command({ jobName: "analyze_x_posts", capability: "x.posts.analyze" })) } });
-    await expect(new MacXWorker(fixture.dependencies).tick()).rejects.toMatchObject({ code: "x_lineage_required" });
+    await expect(new MacXWorker(fixture.dependencies).tick()).resolves.toMatchObject({ status: "failed" });
   });
 
   it("does not start a command when database lineage readiness is false", async () => {
     const fixture = deps({ service: { lineageReady: vi.fn(async () => false) } });
-    await expect(new MacXWorker(fixture.dependencies).tick()).rejects.toMatchObject({ code: "x_lineage_not_ready" });
+    await expect(new MacXWorker(fixture.dependencies).tick()).resolves.toMatchObject({ status: "failed" });
     expect(fixture.service.start).not.toHaveBeenCalled();
     expect(fixture.dispatcher).not.toHaveBeenCalled();
   });

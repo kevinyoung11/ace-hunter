@@ -35,20 +35,20 @@ export class MacXWorker {
     await retryTransient(() => this.options.service.heartbeat(this.options.workerId, "local", [...MAC_X_CAPABILITIES], this.options.version, { worker: "mac-x" }));
     const command = await retryTransient(() => this.options.service.claim(this.options.workerId, "local", [...MAC_X_CAPABILITIES]));
     if (!command) return { processed: false, reason: "idle" };
-    this.assertCommand(command);
-    if (!(await this.options.service.lineageReady(command.id))) {
-      throw Object.assign(new Error("x_lineage_not_ready"), { code: "x_lineage_not_ready" });
-    }
-    const started = await this.options.service.start(command.id, this.options.workerId);
-    if (!started) throw Object.assign(new Error("command_lease_lost"), { code: "command_lease_lost" });
-    const input: JobInput = {
-      name: command.jobName,
-      triggerType: "schedule",
-      scheduledFor: command.scheduledFor ?? this.now(),
-      parameters: { ...command.parameters, command_id: command.id },
-      commandId: command.id,
-    };
     try {
+      this.assertCommand(command);
+      if (!(await this.options.service.lineageReady(command.id))) {
+        throw Object.assign(new Error("x_lineage_not_ready"), { code: "x_lineage_not_ready" });
+      }
+      const started = await this.options.service.start(command.id, this.options.workerId);
+      if (!started) throw Object.assign(new Error("command_lease_lost"), { code: "command_lease_lost" });
+      const input: JobInput = {
+        name: command.jobName,
+        triggerType: "schedule",
+        scheduledFor: command.scheduledFor ?? this.now(),
+        parameters: { ...command.parameters, command_id: command.id },
+        commandId: command.id,
+      };
       const output = await this.options.dispatcher(input);
       if (!output.runId) throw Object.assign(new Error("job_run_missing"), { code: "job_run_missing" });
       await this.options.service.bind(command.id, this.options.workerId, output.runId);

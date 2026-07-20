@@ -39,11 +39,14 @@ export async function executeGitHubCommand(options: { commandId: string; workerI
   if (!existing || existing.executor !== "github") throw Object.assign(new Error("command_not_found"), { code: "command_not_found" });
   const claimed = await options.store.claim(options.commandId, options.workerId, "github", [existing.capability]);
   if (!claimed) throw Object.assign(new Error("command_not_claimable"), { code: "command_not_claimable" });
-  await options.store.start(options.commandId, options.workerId);
   try {
+    const started = await options.store.start(options.commandId, options.workerId);
+    if (!started) throw Object.assign(new Error("command_lease_lost"), { code: "command_lease_lost" });
     const result = await options.run(claimed);
-    await options.store.bind(options.commandId, options.workerId, result.runId);
-    await options.store.complete(options.commandId, options.workerId, result.status, result.errorCode, result.errorMessage);
+    const bound = await options.store.bind(options.commandId, options.workerId, result.runId);
+    if (!bound) throw Object.assign(new Error("command_bind_failed"), { code: "command_bind_failed" });
+    const completed = await options.store.complete(options.commandId, options.workerId, result.status, result.errorCode, result.errorMessage);
+    if (!completed) throw Object.assign(new Error("command_complete_failed"), { code: "command_complete_failed" });
     return result;
   } catch (error) {
     const message = error instanceof Error ? error.message.slice(0, 256) : "github command failed";
