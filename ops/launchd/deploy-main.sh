@@ -38,10 +38,14 @@ mkdir -p "$releases_dir" "${app_dir}/bin"
 chmod 700 "$app_dir" "$releases_dir" "${app_dir}/bin"
 candidate_tmp="${releases_dir}/.trusted-${main_sha}.$$"
 cleanup_trusted() {
-  [[ -n "${candidate_tmp:-}" && -e "$candidate_tmp" ]] && rm -rf -- "$candidate_tmp"
+  if [[ "${candidate_tmp_created:-0}" = 1 && -e "$candidate_tmp" ]]; then
+    rm -rf -- "$candidate_tmp"
+  fi
+  return 0
 }
 trap cleanup_trusted EXIT
 mkdir "$candidate_tmp"
+candidate_tmp_created=1
 git archive "$main_sha" | tar -x -C "$candidate_tmp"
 node_bin_dir="$(dirname "$node_path")"
 npm_cli="$(realpath "${node_bin_dir}/npm" 2>/dev/null)" || { printf 'node22_npm_not_found\n' >&2; exit 1; }

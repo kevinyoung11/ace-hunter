@@ -21,6 +21,11 @@ it("builds the immutable release with npm and lifecycle PATH from the selected N
   expect(script).not.toContain("npm ci");
 });
 
+it("makes trusted temp cleanup idempotent after the temp is moved", async () => {
+  const script = await readFile("ops/launchd/deploy-main.sh", "utf8");
+  expect(script).toContain("return 0\n");
+});
+
 it("persists the resolver-selected stable Node path in the user wrapper", async () => {
   const script = await readFile("ops/launchd/deploy-main.sh", "utf8");
   expect(script).toContain('node_path="$("${repo_root}/scripts/resolve-node22.sh")"');
