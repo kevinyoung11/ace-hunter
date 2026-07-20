@@ -1,0 +1,1 @@
+import { guard, output, fail } from "@/lib/ops/http"; export const runtime="nodejs"; export async function POST(req:Request){const g=guard(req,true);if(g.response)return g.response;if(req.headers.get("x-ops-tick-secret")!==process.env.ACE_HUNTER_OPS_TICK_SECRET)return fail("tick_forbidden",403,g.id);return output({accepted:true,dispatched:0},g.id,202)}

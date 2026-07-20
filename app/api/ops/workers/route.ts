@@ -1,0 +1,2 @@
+import { guard, output, fail } from "@/lib/ops/http"; import { opsService } from "@/lib/ops/service";
+export const runtime="nodejs"; export async function GET(req:Request){const g=guard(req);if(g.response)return g.response;try{const r=await opsService().pool.query("select * from ace_hunter.list_worker_heartbeats()");return output({workers:r.rows},g.id)}catch{return fail("ops_database_error",503,g.id)}}
