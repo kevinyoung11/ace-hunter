@@ -92,6 +92,16 @@ alter table ace_hunter.worker_heartbeats force row level security;
 alter table ace_hunter.ops_audit_log force row level security;
 
 -- Only SECURITY DEFINER functions below access command rows; direct table CRUD is denied.
+-- The definer owner is deliberately the only RLS actor with a blanket policy;
+-- executor roles still have no direct table privileges or policies.
+create policy control_owner_job_definitions on ace_hunter.job_definitions
+  for all to ace_hunter_owner using (true) with check (true);
+create policy control_owner_job_commands on ace_hunter.job_commands
+  for all to ace_hunter_owner using (true) with check (true);
+create policy control_owner_worker_heartbeats on ace_hunter.worker_heartbeats
+  for all to ace_hunter_owner using (true) with check (true);
+create policy control_owner_audit on ace_hunter.ops_audit_log
+  for all to ace_hunter_owner using (true) with check (true);
 revoke all on ace_hunter.job_definitions, ace_hunter.job_commands,
   ace_hunter.worker_heartbeats, ace_hunter.ops_audit_log from public;
 create policy ops_job_definitions_read on ace_hunter.job_definitions for select to ace_hunter_ops using (true);
