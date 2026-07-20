@@ -23,6 +23,7 @@ import type {
 import type { TrendingSource } from "../sources/trending/trending-source.js";
 import type { XSourceAdapter } from "../sources/x/x-source.js";
 import type { CommandOutput } from "./output.js";
+import { validateJobRequest } from "../ops/job-catalog.js";
 
 export interface JobDispatcherDependencies {
   pool: Pool;
@@ -49,6 +50,9 @@ export function createJobDispatcher(
     loadedSecrets: dependencies.loadedSecrets,
   });
   return async (input) => {
+    // The dispatcher is also an execution boundary for hosted commands: never
+    // allow an unregistered job name or a caller-supplied executor/capability.
+    validateJobRequest({ name: input.name, parameters: input.parameters });
     let outcome;
     try {
       outcome = await runner.run(input, async (context) =>
