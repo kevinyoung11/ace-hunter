@@ -108,6 +108,15 @@ describe("post-switch minimal signal smokes", () => {
         `#!/bin/bash\ncase "$1" in fetch|cat-file) exit 0;; rev-parse) printf '%s\\n' '${sha}';; *) exit 1;; esac\n`,
         { mode: 0o755 });
       await chmod(fakeGit, 0o755);
+      const fakeLaunchctl = join(fakeBin, "launchctl");
+      await writeFile(fakeLaunchctl, `#!/bin/bash
+case "$1" in
+  print) exit 113;;
+  print-disabled) printf 'disabled services = {\\n}\\n';;
+  *) exit 0;;
+esac
+`, { mode: 0o755 });
+      await chmod(fakeLaunchctl, 0o755);
       await execFile("node", ["scripts/release-integrity.mjs", "seal", candidate, sha], { cwd: process.cwd() });
       await execFile("node", ["scripts/release-transaction.mjs", "begin", transaction, app, codexHome], {
         cwd: process.cwd(), env: { ...process.env, HOME: home, PATH: `${fakeBin}:${process.env.PATH}` },

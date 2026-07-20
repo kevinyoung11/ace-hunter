@@ -6,7 +6,8 @@ import { parse } from "dotenv";
 import { Pool } from "pg";
 import { z } from "zod";
 import { loadRuntimeConfig } from "../src/config/load-config.js";
-import { verifyAcceptedTrendingOutput } from "./accepted-trending-output.js";
+import { verifyAcceptedCandidateSnapshots } from "./accepted-candidate-provenance.js";
+import { verifyAcceptedSignalOutput } from "./accepted-trending-output.js";
 
 const execFile = promisify(execFileCallback);
 const runSchema = z.array(z.object({
@@ -55,26 +56,14 @@ try {
   if (JSON.stringify(periods) !== JSON.stringify(["daily", "monthly", "weekly"])) {
     throw new Error("missing_trending_period");
   }
-  const candidateSnapshots = await pool.query<{ n: number; valid: number }>(`with latest_candidate as (
-      select distinct on (repository_id)
-        repository_id,candidate_rule_version,candidate_buckets
-      from ace_hunter.repository_snapshots
-      where collected_fields->>'core'='true'
-        and coalesce(nullif(collected_fields->>'observed_at','')::timestamptz,created_at) >= $1
-      order by repository_id,
-        coalesce(nullif(collected_fields->>'observed_at','')::timestamptz,created_at) desc,
-        captured_at desc,created_at desc,id desc
-    )
-    select count(*)::int n,count(*) filter (where candidate_rule_version='v2'
-      and candidate_buckets <@ array['age_1d_stars_10','age_3d_stars_100']::text[])::int valid
-    from latest_candidate`, [startedAt]);
-  if ((candidateSnapshots.rows[0]?.n ?? 0) < 1) throw new Error("missing_candidate_v2_snapshot");
-  if (candidateSnapshots.rows[0].valid !== candidateSnapshots.rows[0].n) {
-    throw new Error("invalid_candidate_v2_snapshot");
-  }
+  const candidateSourceJobIds = jobs.rows.filter((row) =>
+    (row.job_name === "discover_github_candidates" && belongs(row, "discover.yml")) ||
+    (row.job_name === "refresh_repo_metrics" && belongs(row, "refresh-metrics.yml")))
+    .map((row) => row.id);
+  await verifyAcceptedCandidateSnapshots(pool, startedAt, candidateSourceJobIds);
   const trendingRun = expectedRuns.find((item) => item.workflow === "trending.yml");
   if (trendingRun === undefined) throw new Error("missing_complete_trending_batch");
-  const completeTrending = await pool.query<{ period: string; captured_at: Date }>(`with candidate_batches as (
+  const completeTrending = await pool.query<{ period: string; captured_at: Date; job_run_id: string }>(`with candidate_batches as (
       select trending.period,trending.captured_at,
         min(trending.job_run_id::text)::uuid job_run_id,count(*)::int row_count
       from ace_hunter.github_trending_snapshots trending
@@ -85,7 +74,7 @@ try {
         and count(distinct trending.job_run_id)=1
         and bool_and(trending.collection_status='success')
     )
-    select distinct candidate.period,candidate.captured_at
+    select distinct candidate.period,candidate.captured_at,candidate.job_run_id
     from candidate_batches candidate
     join ace_hunter.job_runs run on run.id=candidate.job_run_id
     where run.job_name='collect_github_trending'
@@ -102,10 +91,13 @@ try {
       JSON.stringify(["daily", "monthly", "weekly"])) {
     throw new Error("missing_complete_trending_batch");
   }
-  await verifyAcceptedTrendingOutput({
+  await verifyAcceptedSignalOutput({
+    pool,
     smokeDir,
     expectedSmokeDir: join(dirname(runsPath), "release-rollback", "continuation-smoke"),
-    batches: completeTrending.rows.map((row) => ({ period: row.period, capturedAt: row.captured_at })),
+    batches: completeTrending.rows.map((row) => ({
+      period: row.period, capturedAt: row.captured_at, jobRunId: row.job_run_id,
+    })),
   });
   const outputs = await pool.query<{ output_type: string }>(`select output_type from ace_hunter.analysis_outputs
     where (output_type='daily_report' and completed_at >= $1)

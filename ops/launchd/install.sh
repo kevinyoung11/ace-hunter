@@ -3,7 +3,9 @@ set -euo pipefail
 umask 077
 
 [[ "$(uname -s)" = Darwin ]] || { printf 'macos_required\n' >&2; exit 1; }
-[[ $# -eq 1 && "$1" = /* ]] || { printf 'usage_error\n' >&2; exit 1; }
+[[ ( $# -eq 1 || $# -eq 2 ) && "$1" = /* ]] || { printf 'usage_error\n' >&2; exit 1; }
+launchd_mode="${2:-enable}"
+[[ "$launchd_mode" = enable || "$launchd_mode" = preserve ]] || { printf 'usage_error\n' >&2; exit 1; }
 release_root="$(realpath "$1")"
 case "$release_root" in
   "$HOME/Library/Application Support/AceHunter/releases/"*) ;;
@@ -95,7 +97,7 @@ chmod 600 "${agent}.tmp"
 mv -f "${agent}.tmp" "$agent"
 launchctl bootout "$domain" "$agent" >/dev/null 2>&1 || true
 launchctl bootstrap "$domain" "$agent"
-launchctl enable "${domain}/com.kevinyoung.ace-hunter.collect-x"
+[[ "$launchd_mode" = enable ]] && launchctl enable "${domain}/com.kevinyoung.ace-hunter.collect-x"
 trap - ERR HUP INT TERM
 rm -rf "$transaction"
 printf 'launchd_installed\n'

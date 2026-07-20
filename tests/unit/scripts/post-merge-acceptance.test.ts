@@ -22,6 +22,8 @@ it("keeps the owner release transaction active across continuation until the par
   expect(continuation).toContain('trap rollback_on_exit EXIT');
   expect(continuation).toContain('"$node_path" "$transaction_helper" rollback "$release_transaction"');
   expect(continuation).toContain("continuation_complete=1");
+  expect(continuation).toContain('launchd-mode "$release_transaction"');
+  expect(continuation).toContain('install.sh "$release" "$launchd_mode"');
 });
 
 it("accepts freshly recollected comments with valid idempotent analysis", async () => {
@@ -69,11 +71,15 @@ describe("immutable release signal acceptance", () => {
 describe("post-merge database facts", () => {
   it("requires latest candidate snapshots to carry only candidate-v2 provenance", async () => {
     const acceptance = await readFile("scripts/post-merge-acceptance.ts", "utf8");
-    expect(acceptance).toContain("distinct on (repository_id)");
-    expect(acceptance).toContain("candidate_rule_version='v2'");
-    expect(acceptance).toContain("candidate_buckets <@ array['age_1d_stars_10','age_3d_stars_100']::text[]");
-    expect(acceptance).toContain("missing_candidate_v2_snapshot");
-    expect(acceptance).toContain("invalid_candidate_v2_snapshot");
+    const provenance = await readFile("scripts/accepted-candidate-provenance.ts", "utf8");
+    expect(provenance).toContain("distinct on (repository_id)");
+    expect(provenance).toContain("candidate_rule_version='v2'");
+    expect(provenance).toContain("candidate_buckets <@ array['age_1d_stars_10','age_3d_stars_100']::text[]");
+    expect(provenance).toContain("collected_fields->>'source_job_run_id'=any($2::text[])");
+    expect(provenance).toContain("missing_candidate_v2_snapshot");
+    expect(provenance).toContain("invalid_candidate_v2_snapshot");
+    expect(acceptance).toContain("candidateSourceJobIds");
+    expect(acceptance).toContain("verifyAcceptedCandidateSnapshots");
   });
 
   it("requires a terminal attributable complete all-language batch for every period", async () => {
@@ -94,8 +100,8 @@ describe("post-merge database facts", () => {
     expect(acceptance).toContain('["daily", "monthly", "weekly"]');
     expect(acceptance).not.toContain("trending.captured_at >= $1");
     expect(acceptance).toContain("run.completed_at >= $1");
-    expect(acceptance).toContain("select distinct candidate.period,candidate.captured_at");
-    expect(acceptance).toContain("verifyAcceptedTrendingOutput");
+    expect(acceptance).toContain("select distinct candidate.period,candidate.captured_at,candidate.job_run_id");
+    expect(acceptance).toContain("verifyAcceptedSignalOutput");
     expect(acceptance).toContain('expectedSmokeDir: join(dirname(runsPath), "release-rollback", "continuation-smoke")');
     expect(continuation).toContain('SIGNAL_SMOKE_DIR="$smoke_dir"');
   });
