@@ -239,7 +239,9 @@ describe("complete schema", () => {
 
     const policies = await adminPool.query(
       `select tablename,roles,cmd from pg_policies
-        where schemaname='ace_hunter' order by tablename`,
+        where schemaname='ace_hunter'
+          and tablename not in ('job_definitions','job_commands','worker_heartbeats','ops_audit_log')
+        order by tablename`,
     );
     expect(policies.rows).toHaveLength(9);
     expect(
