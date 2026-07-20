@@ -170,6 +170,19 @@ begin
   return result;
 end $$;
 
+create or replace function ace_hunter.claim_job_command_by_id(p_command_id uuid, p_worker_id text, p_executor text, p_capabilities text[] default '{}')
+returns ace_hunter.job_commands language plpgsql security definer volatile
+set search_path = ace_hunter, pg_catalog as $$
+declare result ace_hunter.job_commands;
+begin
+ update ace_hunter.job_commands c set status='claimed', claimed_by=p_worker_id,
+   lease_until=now()+interval '5 minutes', updated_at=now()
+  where c.id=p_command_id and c.status='queued' and c.executor=p_executor
+    and c.capability = any(p_capabilities)
+  returning * into result;
+ return result;
+end $$;
+
 create or replace function ace_hunter.start_job_command(p_command_id uuid, p_worker_id text)
 returns ace_hunter.job_commands language plpgsql security definer volatile
 set search_path = ace_hunter, pg_catalog as $$
@@ -246,6 +259,7 @@ grant execute on function ace_hunter.list_job_definitions() to ace_hunter_ops;
 grant execute on function ace_hunter.get_job_command(uuid) to ace_hunter_ops, ace_hunter_github_runtime, ace_hunter_mac_worker;
 grant execute on function ace_hunter.record_ops_audit(text,text,text,uuid,jsonb), ace_hunter.list_ops_audit(integer) to ace_hunter_ops, ace_hunter_github_runtime, ace_hunter_mac_worker;
 grant execute on function ace_hunter.claim_job_command(text,text,text[]) to ace_hunter_mac_worker, ace_hunter_github_runtime;
+grant execute on function ace_hunter.claim_job_command_by_id(uuid,text,text,text[]) to ace_hunter_github_runtime;
 grant execute on function ace_hunter.start_job_command(uuid,text), ace_hunter.bind_job_run(uuid,text,uuid), ace_hunter.complete_job_command(uuid,text,text,text,text) to ace_hunter_mac_worker, ace_hunter_github_runtime;
 create or replace function ace_hunter.x_lineage_ready(p_command_id uuid)
 returns boolean language plpgsql security definer stable
