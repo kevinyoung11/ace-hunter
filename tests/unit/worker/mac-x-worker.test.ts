@@ -75,6 +75,13 @@ describe("MacXWorker", () => {
     await expect(new MacXWorker(fixture.dependencies).tick()).rejects.toMatchObject({ code: "x_lineage_required" });
   });
 
+  it("does not start a command when database lineage readiness is false", async () => {
+    const fixture = deps({ service: { lineageReady: vi.fn(async () => false) } });
+    await expect(new MacXWorker(fixture.dependencies).tick()).rejects.toMatchObject({ code: "x_lineage_not_ready" });
+    expect(fixture.service.start).not.toHaveBeenCalled();
+    expect(fixture.dispatcher).not.toHaveBeenCalled();
+  });
+
   it("backs off transient heartbeat/claim failures while preserving the queued command", async () => {
     const fixture = deps();
     fixture.service.heartbeat
