@@ -98,6 +98,7 @@ TWITTER_CLI_PATH="$TWITTER_CLI_PATH" run_child "$NODE_PATH" "${RELEASE_ROOT}/dis
 run_id="$(uuidgen | tr '[:upper:]' '[:lower:]')"
 scheduled_for="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 for job in collect_x_posts analyze_x_posts collect_x_comments; do
+  run_child "$NODE_PATH" "${RELEASE_ROOT}/dist/scripts/verify-runtime-credential.js" --env-file "$RUNTIME_ENV_FILE"
   ACE_HUNTER_ENV_FILE="$RUNTIME_ENV_FILE" TWITTER_CLI_PATH="$TWITTER_CLI_PATH" run_child "$NODE_PATH" "${RELEASE_ROOT}/dist/src/cli/index.js" job "$job" \
     --scheduled-for "$scheduled_for" --scheduler launchd --scheduler-run-id "$run_id"
 done

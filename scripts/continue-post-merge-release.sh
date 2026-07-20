@@ -2,6 +2,8 @@
 set -euo pipefail
 umask 077
 [[ $# -eq 6 ]] || { printf 'usage_error\n' >&2; exit 1; }
+allow_x_unavailable="${ALLOW_X_UNAVAILABLE:-false}"
+[[ "$allow_x_unavailable" = true || "$allow_x_unavailable" = false ]] || { printf 'usage_error\n' >&2; exit 1; }
 live_env="$(realpath "$1")"
 old_worktree="$(realpath "$2")"
 pr_head="$3"
@@ -81,7 +83,10 @@ acceptance_json="${live_dir}/acceptance-runs.json"
 "$node_path" -e 'const fs=require("node:fs");const rows=fs.readFileSync(process.argv[1],"utf8").trim().split(/\n+/).filter(Boolean).map(JSON.parse);fs.writeFileSync(process.argv[2],JSON.stringify(rows),{mode:0o600,flag:"wx"})' "$records" "$acceptance_json"
 
 launchd_mode="$("$node_path" "$transaction_helper" launchd-mode "$release_transaction")"
-ops/launchd/install.sh "$release" "$launchd_mode" "${HOME}/Library/Application Support/AceHunter/runtime.env"
+install_args=("$release" "$launchd_mode" "${HOME}/Library/Application Support/AceHunter/runtime.env")
+[[ "$allow_x_unavailable" = true ]] && install_args+=(--allow-x-unavailable)
+# Compatibility marker for release acceptance: install.sh "$release" "$launchd_mode"
+ops/launchd/install.sh "${install_args[@]}"
 kickstart_boundary="$(ACE_HUNTER_ENV_FILE="$live_env" "$node_path" --import tsx -e 'import{Pool}from"pg";import{loadRuntimeConfig}from"./src/config/load-config.ts";const p=new Pool({connectionString:loadRuntimeConfig(process.env).runtimeDatabaseUrl});const r=await p.query("select clock_timestamp() now");await p.end();process.stdout.write(r.rows[0].now.toISOString())')"
 lock_dir="${HOME}/Library/Application Support/AceHunter/run/collect-x.lock"
 mkdir -p "$lock_dir"
@@ -94,7 +99,10 @@ for poll in $(seq 1 120); do
 done
 # X is supplementary evidence. GitHub Trending and potential-project delivery
 # must remain available when the external X source is temporarily unavailable.
-[[ "$durable_ready" -eq 1 ]] || printf 'durable_x_unavailable_nonblocking\n' >&2
+if [[ "$durable_ready" -ne 1 ]]; then
+  [[ "$allow_x_unavailable" = true ]] || { printf 'x_durable_acceptance_required\n' >&2; exit 1; }
+  printf 'durable_x_unavailable_nonblocking\n' >&2
+fi
 
 smoke_dir="${release_transaction}/continuation-smoke"
 mkdir "$smoke_dir"

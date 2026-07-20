@@ -8,9 +8,10 @@ import { pathToFileURL } from "node:url";
 import { parse } from "dotenv";
 import { Pool } from "pg";
 import { recordAdminCatalog } from "./supabase-safety-check.js";
+import { verifyRuntimeCredential } from "./verify-runtime-credential.js";
 
 type Queryable = { query(sql: string, values?: unknown[]): Promise<{ rows: Array<Record<string, unknown>> }> };
-export type CredentialStore = { get(account: string): Promise<string | null>; set(account: string, value: string): Promise<void>; delete(account: string): Promise<void> };
+export type CredentialStore = { get(account: string): Promise<string | null>; set(account: string, value: string): Promise<void>; delete(account: string): Promise<void>; setPair?: (migrationUrl: string, runtimeUrl: string) => Promise<void> };
 export type LiveMode = "bootstrap" | "local" | "release";
 const ROLE_NAMES = new Set(["ace_hunter_migrator", "ace_hunter_runtime"]);
 const KEYCHAIN_ACCOUNTS = { migration: "migration-database-url", runtime: "runtime-database-url" } as const;
@@ -110,8 +111,15 @@ export async function fixedRoleCredentials(options: {
   ]);
   if (options.mode !== "bootstrap") {
     if (!migrationExisting || !runtimeExisting) throw new Error("fixed_credentials_required");
-    validateRoleDsn(migrationExisting, "ace_hunter_migrator", options.adminUrl);
-    validateRoleDsn(runtimeExisting, "ace_hunter_runtime", options.adminUrl);
+    try {
+      validateRoleDsn(migrationExisting, "ace_hunter_migrator", options.adminUrl);
+      validateRoleDsn(runtimeExisting, "ace_hunter_runtime", options.adminUrl);
+      await verifyRuntimeCredential(migrationExisting);
+      await verifyRuntimeCredential(runtimeExisting);
+    } catch (error) {
+      if (error instanceof Error && ["fixed_credentials_required", "invalid_fixed_role_credential"].includes(error.message)) throw error;
+      throw new Error("database_credential_invalid");
+    }
     return { migrationUrl: migrationExisting, runtimeUrl: runtimeExisting };
   }
   if (migrationExisting || runtimeExisting) throw new Error("bootstrap_credentials_already_exist");
@@ -136,6 +144,34 @@ export async function fixedRoleCredentials(options: {
     throw new Error("credential_bootstrap_failed_rolled_back", { cause: error });
   }
   return { migrationUrl, runtimeUrl };
+}
+
+export async function recoverFixedRoleCredentials(options: {
+  keychain: CredentialStore;
+  admin: Queryable;
+  adminUrl: string;
+  migrationUrl: string;
+  runtimeUrl: string;
+  verify?: (url: string) => Promise<void>;
+}): Promise<{ migrationUrl: string; runtimeUrl: string }> {
+  try {
+    validateRoleDsn(options.migrationUrl, "ace_hunter_migrator", options.adminUrl);
+    validateRoleDsn(options.runtimeUrl, "ace_hunter_runtime", options.adminUrl);
+    const verify = options.verify ?? verifyRuntimeCredential;
+    await verify(options.migrationUrl);
+    await verify(options.runtimeUrl);
+    const previousMigration = await options.keychain.get(KEYCHAIN_ACCOUNTS.migration);
+    if (options.keychain.setPair) await options.keychain.setPair(options.migrationUrl, options.runtimeUrl);
+    else {
+      await options.keychain.set(KEYCHAIN_ACCOUNTS.migration, options.migrationUrl);
+      try { await options.keychain.set(KEYCHAIN_ACCOUNTS.runtime, options.runtimeUrl); }
+      catch (error) { if (previousMigration) await options.keychain.set(KEYCHAIN_ACCOUNTS.migration, previousMigration); throw error; }
+    }
+    return { migrationUrl: options.migrationUrl, runtimeUrl: options.runtimeUrl };
+  } catch (error) {
+    if (error instanceof Error && error.message === "database_credential_recovery_required") throw error;
+    throw new Error("database_credential_recovery_required");
+  }
 }
 
 function validateRoleDsn(value: string, expectedUser: string, adminUrl: string): void {
@@ -221,6 +257,12 @@ export function createFileCredentialStore(path: string): CredentialStore {
       const values = await read();
       delete values[key];
       await write(values);
+    },
+    async setPair(migrationUrl, runtimeUrl) {
+      await write({
+        [STORE_KEYS[KEYCHAIN_ACCOUNTS.migration]]: migrationUrl,
+        [STORE_KEYS[KEYCHAIN_ACCOUNTS.runtime]]: runtimeUrl,
+      });
     },
   };
 }

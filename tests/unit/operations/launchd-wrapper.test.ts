@@ -10,6 +10,11 @@ const temporary: string[] = [];
 afterEach(async () => Promise.all(temporary.splice(0).map((path) => rm(path, { recursive: true, force: true }))));
 
 describe("launchd X wrapper", () => {
+  it("requires database preflight before every X stage", async () => {
+    const script = await readFile("scripts/run-scheduled-x.sh", "utf8");
+    expect(script.match(/verify-runtime-credential\.js/g)?.length).toBe(1);
+    expect(script).toContain("for job in collect_x_posts analyze_x_posts collect_x_comments");
+  });
   it("uses a six-hour launch agent without embedding runtime secrets", async () => {
     const plist = await readFile("ops/launchd/com.kevinyoung.ace-hunter.collect-x.plist", "utf8");
     expect(plist).toContain("<key>StartInterval</key>\n  <integer>21600</integer>");

@@ -9,6 +9,7 @@ import {
   parseSourceDotenv,
   serializeDotenv,
   setFixedRolePassword,
+  recoverFixedRoleCredentials,
 } from "../../../scripts/prepare-live-env.js";
 
 const temporaryDirectories: string[] = [];
@@ -124,5 +125,30 @@ describe("prepare-live-env safety helpers", () => {
     expect(keychain.delete).toHaveBeenCalledWith("runtime-database-url");
     expect(query).toHaveBeenCalledWith("alter role ace_hunter_migrator nologin");
     expect(query).toHaveBeenCalledWith("alter role ace_hunter_runtime nologin");
+  });
+
+  it("rejects a syntactically valid but unreachable release DSN without exposing it", async () => {
+    const keychain = { get: async (account: string) => account.startsWith("migration")
+      ? "postgres://ace_hunter_migrator:secret@127.0.0.1:1/db"
+      : "postgres://ace_hunter_runtime:secret@127.0.0.1:1/db", set: vi.fn(), delete: vi.fn() };
+    await expect(fixedRoleCredentials({ mode: "release", keychain, admin: { query: vi.fn() }, adminUrl: "postgres://admin:x@127.0.0.1:1/db" }))
+      .rejects.toThrow("database_credential_invalid");
+    await expect(fixedRoleCredentials({ mode: "release", keychain, admin: { query: vi.fn() }, adminUrl: "postgres://admin:x@127.0.0.1:1/db" }))
+      .rejects.not.toThrow("secret");
+  });
+
+  it("only atomically replaces credentials after read and rollback-scoped write probes", async () => {
+    const store = { get: vi.fn(async (account: string) => account.startsWith("migration") ? "old-migration" : "old-runtime"), set: vi.fn(), delete: vi.fn() };
+    const admin = { query: vi.fn() };
+    const result = await recoverFixedRoleCredentials({
+      keychain: store,
+      adminUrl: "postgres://admin:x@db.example.test:5432/postgres",
+      admin,
+      migrationUrl: "postgres://ace_hunter_migrator:new@db.example.test:5432/postgres",
+      runtimeUrl: "postgres://ace_hunter_runtime:new@db.example.test:5432/postgres",
+      verify: vi.fn(async () => undefined),
+    });
+    expect(result).toEqual({ migrationUrl: expect.any(String), runtimeUrl: expect.any(String) });
+    expect(store.set).toHaveBeenCalled();
   });
 });

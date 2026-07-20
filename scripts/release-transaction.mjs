@@ -52,7 +52,10 @@ async function begin() {
   if (launchd.loaded && artifacts.agent.state !== "file") {
     throw new Error("release_transaction_launchd_state_unrestorable");
   }
-  await writeState({ version: 3, status: "active", uid: process.getuid?.(), paths, artifacts, launchd });
+  // Local artifacts are rollback-safe; external database role passwords are
+  // intentionally not claimed reversible by this transaction.
+  await writeState({ version: 3, status: "active", uid: process.getuid?.(), paths, artifacts, launchd,
+    externalDatabase: { passwordState: "not_rollbackable" } });
 }
 
 function probeLaunchd(domain) {
@@ -153,7 +156,8 @@ async function loadState(expectedStatus) {
     typeof state.launchd?.disabledOverride === "boolean";
   if (state.version !== 3 || state.uid !== process.getuid?.() || typeof state.paths !== "object" ||
       typeof state.artifacts !== "object" || typeof state.status !== "string" ||
-      typeof state.launchd?.loaded !== "boolean" || !validDisabledOverride) throw new Error("release_transaction_invalid");
+      typeof state.launchd?.loaded !== "boolean" || !validDisabledOverride ||
+      state.externalDatabase?.passwordState !== "not_rollbackable") throw new Error("release_transaction_invalid");
   if (expectedStatus !== undefined && state.status !== expectedStatus) throw new Error("release_transaction_not_active");
   return state;
 }
