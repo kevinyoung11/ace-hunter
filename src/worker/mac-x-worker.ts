@@ -86,6 +86,11 @@ export class MacXWorker {
       if (!lineage || typeof lineage !== "object" || typeof (lineage as Record<string, unknown>).parent_command_id !== "string") {
         throw Object.assign(new Error("x_lineage_required"), { code: "x_lineage_required" });
       }
+      const parentProduct = (lineage as Record<string, unknown>).parent_product_id;
+      const product = command.parameters.productId ?? command.parameters.product_id;
+      if (parentProduct !== undefined && product !== undefined && parentProduct !== product) {
+        throw Object.assign(new Error("x_lineage_mismatch"), { code: "x_lineage_mismatch" });
+      }
     }
   }
 }
