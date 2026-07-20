@@ -8,7 +8,12 @@ const dailyTopSignal = {
   id: "prompt-saver",
   name: "Prompt Saver",
   description: "保存可复用的提示词。",
+  language: "TypeScript",
   href: "https://example.com/prompt-saver",
+  rank: 1,
+  starsInPeriod: 42,
+  stars: 1_200,
+  capturedAt: "2026-07-21T08:30:00.000Z",
 };
 
 afterEach(() => {
@@ -26,6 +31,9 @@ describe("SkillHomepage", () => {
     expect(screen.getByRole("link", { name: "查看趋势榜" }).getAttribute("href")).toBe("#trending");
     expect(screen.getByText("Prompt Saver").getAttribute("href")).toBe("https://example.com/prompt-saver");
     expect(screen.getByText("保存可复用的提示词。")).not.toBeNull();
+    expect(screen.getByText("#1")).not.toBeNull();
+    expect(screen.getByText("+42 stars")).not.toBeNull();
+    expect(screen.getByText("Captured 2026-07-21 08:30 UTC")).not.toBeNull();
     expect(screen.getByRole("link", { name: "打开控制台" }).getAttribute("href")).toBe("/console");
     expect(screen.getByText("发现项目：从趋势信号中找到适合当前任务的项目。")).not.toBeNull();
     expect(screen.getByText("分析指定仓库：输入 owner/repo 获取当前项目观察。")).not.toBeNull();
@@ -105,7 +113,15 @@ describe("TrendingBoard", () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({
-        items: [{ rank: 1, fullName: "acme/skill-finder", repoUrl: "https://github.com/acme/skill-finder", language: "TypeScript" }],
+        items: [{
+          rank: 1,
+          fullName: "acme/skill-finder",
+          repoUrl: "https://github.com/acme/skill-finder",
+          language: "TypeScript",
+          starsInPeriod: 42,
+          stars: 1_200,
+          capturedAt: "2026-07-21T08:30:00.000Z",
+        }],
       }),
     }));
     render(<TrendingBoard initialItems={[]} />);
@@ -114,5 +130,24 @@ describe("TrendingBoard", () => {
 
     const repository = await screen.findByText("acme/skill-finder");
     expect(repository.getAttribute("href")).toBe("https://github.com/acme/skill-finder");
+    expect(screen.getByText("#1")).not.toBeNull();
+    expect(screen.getByText("TypeScript")).not.toBeNull();
+    expect(screen.getByText("+42")).not.toBeNull();
+    expect(screen.getByText("1,200")).not.toBeNull();
+    expect(screen.getByText("2026-07-21 08:30 UTC")).not.toBeNull();
+  });
+
+  it("retries an initially unavailable daily board when today is selected", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ items: [{ id: "recovered", name: "Recovered signal" }] }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<TrendingBoard initialItems={[]} initialUnavailable />);
+
+    fireEvent.click(screen.getByRole("button", { name: "今日" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/trending?period=daily"));
+    expect(await screen.findByText("Recovered signal")).not.toBeNull();
   });
 });
