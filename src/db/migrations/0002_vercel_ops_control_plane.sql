@@ -2,13 +2,12 @@
 set local search_path = ace_hunter, extensions, pg_catalog;
 
 do $$ begin
-  if not exists (select 1 from pg_roles where rolname='ace_hunter_ops') then create role ace_hunter_ops; end if;
-  if not exists (select 1 from pg_roles where rolname='ace_hunter_github_runtime') then create role ace_hunter_github_runtime; end if;
-  if not exists (select 1 from pg_roles where rolname='ace_hunter_mac_worker') then create role ace_hunter_mac_worker; end if;
+  if not exists (select 1 from pg_roles where rolname='ace_hunter_ops')
+     or not exists (select 1 from pg_roles where rolname='ace_hunter_github_runtime')
+     or not exists (select 1 from pg_roles where rolname='ace_hunter_mac_worker') then
+    raise exception 'ops roles must be provisioned by ops/03_bootstrap_ops_roles.sql before 0002 migration';
+  end if;
 end $$;
-alter role ace_hunter_ops nologin nosuperuser nocreatedb nocreaterole noinherit noreplication nobypassrls;
-alter role ace_hunter_github_runtime nologin nosuperuser nocreatedb nocreaterole noinherit noreplication nobypassrls;
-alter role ace_hunter_mac_worker nologin nosuperuser nocreatedb nocreaterole noinherit noreplication nobypassrls;
 
 create table ace_hunter.job_definitions (
   name text primary key,
