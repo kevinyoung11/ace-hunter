@@ -9,6 +9,21 @@ it("waits for the three distinct successful launchd parent stages", async () => 
   expect(continuation).toContain('r.rows[0].n===3');
 });
 
+it("keeps the owner release transaction active across continuation until the parent commits", async () => {
+  const parent = await readFile("scripts/run-post-merge-release.sh", "utf8");
+  const continuation = await readFile("scripts/continue-post-merge-release.sh", "utf8");
+  expect(parent).toContain('node "$transaction_helper" begin "$release_transaction"');
+  expect(parent).toContain('ops/launchd/deploy-main.sh "$main_sha" "$live_env" "$release_transaction"');
+  expect(parent).not.toMatch(/exec\s+"\$\{release\}\/scripts\/continue-post-merge-release\.sh/u);
+  const childCall = parent.indexOf('"${release}/scripts/continue-post-merge-release.sh"');
+  const commitFlag = parent.indexOf("transaction_committed=1", childCall);
+  expect(childCall).toBeGreaterThan(-1);
+  expect(commitFlag).toBeGreaterThan(childCall);
+  expect(continuation).toContain('trap rollback_on_exit EXIT');
+  expect(continuation).toContain('"$node_path" "$transaction_helper" rollback "$release_transaction"');
+  expect(continuation).toContain("continuation_complete=1");
+});
+
 it("accepts freshly recollected comments with valid idempotent analysis", async () => {
   const acceptance = await readFile("scripts/post-merge-acceptance.ts", "utf8");
   expect(acceptance).toContain("metrics_updated_at between $3 and $4");
@@ -21,28 +36,32 @@ describe("immutable release signal acceptance", () => {
   it("runs every minimal signal CLI smoke directly from the immutable release", async () => {
     const continuation = await readFile("scripts/continue-post-merge-release.sh", "utf8");
     const commands = [
-      "potential --format json",
-      "trending daily --format json",
-      "trending weekly --format json",
-      "trending monthly --format json",
-      "trending all --format json",
+      ["potential --format json", "potential.json"],
+      ["trending daily --format json", "daily.json"],
+      ["trending weekly --format json", "weekly.json"],
+      ["trending monthly --format json", "monthly.json"],
+      ["trending all --format json", "all.json"],
     ];
 
-    for (const command of commands) {
+    for (const [command, output] of commands) {
       expect(continuation).toContain(
-        `ACE_HUNTER_ENV_FILE="$live_env" "$node_path" "${"${release}"}/dist/src/cli/index.js" ${command} >/dev/null`,
+        `ACE_HUNTER_ENV_FILE="$readonly_env" "$node_path" "${"${release}"}/dist/src/cli/index.js" ${command} >"${"${smoke_dir}"}/${output}"`,
       );
     }
+    expect(continuation).toContain('env -i HOME="$HOME" PATH="/usr/bin:/bin"');
+    expect(continuation).toContain("validate-signal-release.js");
   });
 
   it("exercises representative Trending and potential Skill routes through Codex", async () => {
     const continuation = await readFile("scripts/continue-post-merge-release.sh", "utf8");
     expect(continuation).toContain(
-      "Use $ace-hunter to show the weekly GitHub Trending list. Return only the tool result.",
+      "Use $ace-hunter to run ace-hunter trending weekly --format json. Return only the exact JSON tool result.",
     );
     expect(continuation).toContain(
-      "Use $ace-hunter to show potential GitHub repositories. Return only the tool result.",
+      "Use $ace-hunter to run ace-hunter potential --format json. Return only the exact JSON tool result.",
     );
+    expect(continuation).toContain('>"${smoke_dir}/skill-weekly.json"');
+    expect(continuation).toContain('>"${smoke_dir}/skill-potential.json"');
   });
 });
 
@@ -71,6 +90,8 @@ describe("post-merge database facts", () => {
       "missing_complete_trending_batch",
     ]) expect(acceptance).toContain(semantic);
     expect(acceptance).toContain('["daily", "monthly", "weekly"]');
+    expect(acceptance).not.toContain("trending.captured_at >= $1");
+    expect(acceptance).toContain("run.completed_at >= $1");
   });
 
   it("keeps production history read-only during fact verification", async () => {

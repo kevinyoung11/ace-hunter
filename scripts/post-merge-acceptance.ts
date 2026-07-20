@@ -75,7 +75,7 @@ try {
       select trending.period,trending.captured_at,
         min(trending.job_run_id::text)::uuid job_run_id,count(*)::int row_count
       from ace_hunter.github_trending_snapshots trending
-      where trending.language='all' and trending.captured_at >= $1
+      where trending.language='all'
         and trending.period=any(array['daily','weekly','monthly']::text[])
       group by trending.period,trending.captured_at
       having count(trending.job_run_id)=count(*)

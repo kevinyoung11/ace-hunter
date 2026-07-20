@@ -15,36 +15,45 @@ it("smoke-tests list with its actual option-free CLI contract", async () => {
 });
 
 describe("post-switch minimal signal smokes", () => {
-  it("uses the deployment-managed wrapper for every JSON read route", async () => {
+  it("captures every deployment-managed JSON route for content validation with DB-only env", async () => {
     const script = await readFile("ops/launchd/deploy-main.sh", "utf8");
     const commands = [
-      "potential --format json",
-      "trending daily --format json",
-      "trending weekly --format json",
-      "trending monthly --format json",
-      "trending all --format json",
+      ["potential --format json", "potential.json"],
+      ["trending daily --format json", "daily.json"],
+      ["trending weekly --format json", "weekly.json"],
+      ["trending monthly --format json", "monthly.json"],
+      ["trending all --format json", "all.json"],
     ];
 
-    for (const command of commands) {
-      expect(script).toContain(`ACE_HUNTER_ENV_FILE="$live_env" "$wrapper" ${command} >/dev/null`);
+    for (const [command, output] of commands) {
+      expect(script).toContain(`ACE_HUNTER_ENV_FILE="$readonly_env" "$wrapper" ${command} >"${"${smoke_dir}"}/${output}"`);
     }
+    expect(script).toContain('env -i HOME="$HOME" PATH="/usr/bin:/bin" NODE_PATH="$node_path"');
+    expect(script).toContain('ACE_HUNTER_RUNTIME_DATABASE_URL');
+    expect(script).toContain('validate-signal-release.js');
+    expect(script).not.toContain('ACE_HUNTER_ENV_FILE="$live_env" "$wrapper" potential');
   });
 
   it("keeps every new smoke inside the transaction that restores all switched artifacts", async () => {
     const script = await readFile("ops/launchd/deploy-main.sh", "utf8");
     const switchFinished = script.indexOf('atomic_replace "${skill_link}.new.$$" "$skill_link"');
-    const firstSignalSmoke = script.indexOf('ACE_HUNTER_ENV_FILE="$live_env" "$wrapper" potential --format json >/dev/null');
+    const firstSignalSmoke = script.indexOf('ACE_HUNTER_ENV_FILE="$readonly_env" "$wrapper" potential --format json');
     const transactionCommitted = script.indexOf("trap - ERR HUP INT TERM", firstSignalSmoke);
 
     expect(switchFinished).toBeGreaterThan(-1);
     expect(firstSignalSmoke).toBeGreaterThan(switchFinished);
     expect(transactionCommitted).toBeGreaterThan(firstSignalSmoke);
     expect(script.indexOf("trap 'rollback_exit $?' ERR")).toBeLessThan(firstSignalSmoke);
-    expect(script).toContain('rm -f "$current" "$wrapper" "$skill_link"');
-    expect(script).toContain('atomic_replace "${current}.rollback.$$" "$current"');
-    expect(script).toContain('atomic_replace "${wrapper}.rollback.$$" "$wrapper"');
-    expect(script).toContain('atomic_replace "${skill_link}.rollback.$$" "$skill_link"');
+    expect(script).toContain('"$node_path" "$transaction_helper" rollback "$transaction"');
     expect(script).not.toMatch(/set\s+-[^\n]*x/u);
+  });
+
+  it("verifies a sealed non-symlink immutable release before first use and reuse", async () => {
+    const script = await readFile("ops/launchd/deploy-main.sh", "utf8");
+    expect(script).toContain('"$integrity_helper" seal "$candidate_tmp" "$main_sha"');
+    expect(script).toContain('"$integrity_helper" verify "$candidate_tmp" "$main_sha"');
+    expect(script).toContain('"$integrity_helper" verify "$candidate" "$main_sha"');
+    expect(script).toContain('[[ -d "$candidate" && ! -L "$candidate" ]]');
   });
 
   it("restores the prior current, wrapper, and Skill link when a new smoke fails", async () => {
@@ -60,6 +69,7 @@ describe("post-switch minimal signal smokes", () => {
     const skillLink = join(codexHome, "skills", "ace-hunter");
     const liveEnv = join(root, "runtime.env");
     const fakeBin = join(root, "bin");
+    const transaction = join(root, "owner-only", "release-rollback");
     const priorWrapper = "#!/bin/bash\nprintf 'prior wrapper\\n'\n";
     try {
       await Promise.all([
@@ -70,14 +80,25 @@ describe("post-switch minimal signal smokes", () => {
         mkdir(join(app, "bin"), { recursive: true }),
         mkdir(join(codexHome, "skills"), { recursive: true }),
         mkdir(fakeBin, { recursive: true }),
+        mkdir(join(root, "owner-only"), { recursive: true, mode: 0o700 }),
       ]);
-      await writeFile(liveEnv, "ACE_HUNTER_RUNTIME_DATABASE_URL=postgres://runtime\n", { mode: 0o600 });
+      await writeFile(liveEnv, [
+        "ACE_HUNTER_RUNTIME_DATABASE_URL=postgres://runtime",
+        "ACE_HUNTER_GITHUB_TOKEN=top-secret-github",
+        "ACE_HUNTER_DEEPSEEK_API_KEY=top-secret-model",
+        "ACE_HUNTER_USER_ID=00000000-0000-4000-8000-000000000001",
+        "",
+      ].join("\n"), { mode: 0o600 });
       await writeFile(wrapper, priorWrapper, { mode: 0o755 });
       await symlink(prior, join(app, "current"));
       await symlink(join(prior, "skills", "ace-hunter"), skillLink);
       await writeFile(join(candidate, "dist", "src", "cli", "index.js"),
-        "if(process.argv[2]==='trending'&&process.argv[3]==='weekly')process.exit(23);\n");
+        "import{readFileSync,statSync}from'node:fs';const c=process.argv[2];if(c==='potential'||c==='trending'){if(process.env.ACE_HUNTER_GITHUB_TOKEN||process.env.ACE_HUNTER_DEEPSEEK_API_KEY||process.env.ACE_HUNTER_USER_ID)process.exit(31);const p=process.env.ACE_HUNTER_ENV_FILE;const x=readFileSync(p,'utf8');if(!/^ACE_HUNTER_RUNTIME_DATABASE_URL=/.test(x)||/TOKEN|API_KEY|USER_ID/.test(x)||(statSync(p).mode&0o77)!==0)process.exit(32)}if(c==='trending'&&process.argv[3]==='weekly')process.exit(23);\n");
       await writeFile(join(candidate, "scripts", "validate-skill.mjs"), "process.exit(0);\n");
+      await mkdir(join(candidate, "dist", "scripts"), { recursive: true });
+      await writeFile(join(candidate, "dist", "scripts", "validate-signal-release.js"), "process.exit(0);\n");
+      await writeFile(join(candidate, "dist", "scripts", "pipe-env-value.js"),
+        "import{readFileSync}from'node:fs';const a=process.argv.slice(2);if(a.length===2)process.stdout.write('postgres://runtime');else{for await(const c of process.stdin)process.stdout.write('ACE_HUNTER_RUNTIME_DATABASE_URL='+JSON.stringify(String(c))+'\\n')}\n");
       await writeFile(join(candidate, "scripts", "run-user-command.sh"),
         '#!/bin/bash\nscript_dir="$(cd "$(dirname "$0")" && pwd -P)"\nexec "${NODE_PATH}" "${script_dir}/../dist/src/cli/index.js" "$@"\n',
         { mode: 0o755 });
@@ -86,8 +107,12 @@ describe("post-switch minimal signal smokes", () => {
         `#!/bin/bash\ncase "$1" in fetch|cat-file) exit 0;; rev-parse) printf '%s\\n' '${sha}';; *) exit 1;; esac\n`,
         { mode: 0o755 });
       await chmod(fakeGit, 0o755);
+      await execFile("node", ["scripts/release-integrity.mjs", "seal", candidate, sha], { cwd: process.cwd() });
+      await execFile("node", ["scripts/release-transaction.mjs", "begin", transaction, app, codexHome], {
+        cwd: process.cwd(), env: { ...process.env, HOME: home, PATH: `${fakeBin}:${process.env.PATH}` },
+      });
 
-      await expect(execFile("bash", ["ops/launchd/deploy-main.sh", sha, liveEnv], {
+      await expect(execFile("bash", ["ops/launchd/deploy-main.sh", sha, liveEnv, transaction], {
         cwd: process.cwd(),
         env: { ...process.env, HOME: home, CODEX_HOME: codexHome, PATH: `${fakeBin}:${process.env.PATH}` },
       })).rejects.toMatchObject({ code: 23 });

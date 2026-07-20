@@ -1,12 +1,13 @@
 #!/bin/bash
 set -euo pipefail
 umask 077
-[[ $# -eq 5 ]] || { printf 'usage_error\n' >&2; exit 1; }
+[[ $# -eq 6 ]] || { printf 'usage_error\n' >&2; exit 1; }
 live_env="$(realpath "$1")"
 old_worktree="$(realpath "$2")"
 pr_head="$3"
 main_sha="$4"
 repo_root="$(realpath "$5")"
+release_transaction="$(realpath "$6")"
 temp_base="${TMPDIR:-/tmp}"; temp_base="$(realpath "${temp_base%/}")"
 case "$live_env" in "${temp_base}"/ace-hunter-live-*/runtime.env) ;; *) exit 1;; esac
 live_dir="$(dirname "$live_env")"
@@ -14,12 +15,26 @@ live_dir="$(dirname "$live_env")"
 release="${HOME}/Library/Application Support/AceHunter/releases/${main_sha}"
 node_path="$(command -v node)"
 node_path="$(realpath "$node_path")"
+transaction_helper="${release}/scripts/release-transaction.mjs"
+"$node_path" "$transaction_helper" verify "$release_transaction" >/dev/null
+readonly_env="${release_transaction}/readonly.env"
+[[ -f "$readonly_env" && ! -L "$readonly_env" && "$(stat -f '%u' "$readonly_env")" = "$(id -u)" &&
+  "$(stat -f '%Lp' "$readonly_env")" = 600 ]] || { printf 'readonly_env_invalid\n' >&2; exit 1; }
 [[ "$(pwd -P)" != "$old_worktree" ]] || cd "$release"
 cd "$release"
-cleanup() { case "$live_dir" in "${temp_base}"/ace-hunter-live-*) rm -rf "$live_dir";; esac; }
-trap cleanup EXIT
-trap 'cleanup; trap - EXIT; exit 130' INT
-trap 'cleanup; trap - EXIT; exit 143' TERM
+continuation_complete=0
+rollback_on_exit() {
+  local status=$?
+  trap - EXIT HUP INT TERM
+  if [[ "$continuation_complete" -eq 0 ]]; then
+    "$node_path" "$transaction_helper" rollback "$release_transaction" >/dev/null || status=1
+  fi
+  exit "$status"
+}
+trap rollback_on_exit EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 registered="$(git -C "$repo_root" worktree list --porcelain)"
 printf '%s\n' "$registered" | grep -Fqx "worktree ${old_worktree}"
@@ -79,24 +94,37 @@ for poll in $(seq 1 120); do
 done
 [[ "$durable_ready" -eq 1 ]] || { printf 'durable_x_timeout\n' >&2; exit 1; }
 
-ACE_HUNTER_ENV_FILE="$live_env" "$node_path" "${release}/dist/src/cli/index.js" potential --format json >/dev/null
-ACE_HUNTER_ENV_FILE="$live_env" "$node_path" "${release}/dist/src/cli/index.js" trending daily --format json >/dev/null
-ACE_HUNTER_ENV_FILE="$live_env" "$node_path" "${release}/dist/src/cli/index.js" trending weekly --format json >/dev/null
-ACE_HUNTER_ENV_FILE="$live_env" "$node_path" "${release}/dist/src/cli/index.js" trending monthly --format json >/dev/null
-ACE_HUNTER_ENV_FILE="$live_env" "$node_path" "${release}/dist/src/cli/index.js" trending all --format json >/dev/null
+smoke_dir="${release_transaction}/continuation-smoke"
+mkdir "$smoke_dir"
+chmod 700 "$smoke_dir"
+env -i HOME="$HOME" PATH="/usr/bin:/bin" ACE_HUNTER_ENV_FILE="$readonly_env" "$node_path" "${release}/dist/src/cli/index.js" potential --format json >"${smoke_dir}/potential.json"
+env -i HOME="$HOME" PATH="/usr/bin:/bin" ACE_HUNTER_ENV_FILE="$readonly_env" "$node_path" "${release}/dist/src/cli/index.js" trending daily --format json >"${smoke_dir}/daily.json"
+env -i HOME="$HOME" PATH="/usr/bin:/bin" ACE_HUNTER_ENV_FILE="$readonly_env" "$node_path" "${release}/dist/src/cli/index.js" trending weekly --format json >"${smoke_dir}/weekly.json"
+env -i HOME="$HOME" PATH="/usr/bin:/bin" ACE_HUNTER_ENV_FILE="$readonly_env" "$node_path" "${release}/dist/src/cli/index.js" trending monthly --format json >"${smoke_dir}/monthly.json"
+env -i HOME="$HOME" PATH="/usr/bin:/bin" ACE_HUNTER_ENV_FILE="$readonly_env" "$node_path" "${release}/dist/src/cli/index.js" trending all --format json >"${smoke_dir}/all.json"
+chmod 600 "${smoke_dir}"/*.json
 wrapper="${HOME}/Library/Application Support/AceHunter/bin/ace-hunter"
 "$wrapper" observe "$ACE_E2E_REPOSITORY" --format json >/dev/null
 codex_binary="$(command -v codex)"
 CODEX_HOME="${CODEX_HOME:-$HOME/.codex}" "$codex_binary" exec --skip-git-repo-check 'Use $ace-hunter to list monitored products. Return only the tool result.' >/dev/null
 CODEX_HOME="${CODEX_HOME:-$HOME/.codex}" "$codex_binary" exec --skip-git-repo-check "Use \$ace-hunter to observe ${ACE_E2E_REPOSITORY}. Return only the tool result." >/dev/null
-CODEX_HOME="${CODEX_HOME:-$HOME/.codex}" "$codex_binary" exec --skip-git-repo-check 'Use $ace-hunter to show the weekly GitHub Trending list. Return only the tool result.' >/dev/null
-CODEX_HOME="${CODEX_HOME:-$HOME/.codex}" "$codex_binary" exec --skip-git-repo-check 'Use $ace-hunter to show potential GitHub repositories. Return only the tool result.' >/dev/null
+CODEX_HOME="${CODEX_HOME:-$HOME/.codex}" "$codex_binary" exec --skip-git-repo-check \
+  'Use $ace-hunter to run ace-hunter trending weekly --format json. Return only the exact JSON tool result.' \
+  >"${smoke_dir}/skill-weekly.json"
+CODEX_HOME="${CODEX_HOME:-$HOME/.codex}" "$codex_binary" exec --skip-git-repo-check \
+  'Use $ace-hunter to run ace-hunter potential --format json. Return only the exact JSON tool result.' \
+  >"${smoke_dir}/skill-potential.json"
+chmod 600 "${smoke_dir}/skill-weekly.json" "${smoke_dir}/skill-potential.json"
+"$node_path" "${release}/dist/scripts/validate-signal-release.js" \
+  "${smoke_dir}/potential.json" "${smoke_dir}/daily.json" "${smoke_dir}/weekly.json" \
+  "${smoke_dir}/monthly.json" "${smoke_dir}/all.json" "${smoke_dir}/skill-weekly.json" \
+  "${smoke_dir}/skill-potential.json" >/dev/null
 
 : "${ACCEPTANCE_STARTED_AT:?ACCEPTANCE_STARTED_AT is required}"
 export KICKSTART_BOUNDARY="$kickstart_boundary" ACCEPTANCE_RUN_IDS_FILE="$acceptance_json" MAIN_SHA="$main_sha"
 ACE_HUNTER_ENV_FILE="$live_env" node --import tsx scripts/post-merge-acceptance.ts
-cleanup
-trap - EXIT INT TERM
 git -C "$repo_root" fetch --quiet origin main
 [[ "$(git -C "$repo_root" rev-parse origin/main)" = "$main_sha" ]]
+continuation_complete=1
+trap - EXIT HUP INT TERM
 printf 'post_merge_release_passed\n'
