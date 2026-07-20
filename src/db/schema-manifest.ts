@@ -151,7 +151,7 @@ export async function assertCatalogIsAbsentOrComplete(
        join pg_namespace namespace_object on namespace_object.oid=routine.pronamespace
        join pg_language language on language.oid=routine.prolang
       where namespace_object.nspname='ace_hunter'
-        and routine.proname not in ('claim_job_command','start_job_command','bind_job_run','complete_job_command','cancel_job_command','requeue_job_command','heartbeat_worker')
+        and routine.proname not in ('claim_job_command','claim_job_command_by_id','start_job_command','bind_job_run','complete_job_command','cancel_job_command','requeue_job_command','heartbeat_worker','create_job_command','list_job_definitions','get_job_command','record_ops_audit','list_ops_audit','x_lineage_ready','set_job_enabled','retry_job_command')
       order by routine.proname,pg_get_function_identity_arguments(routine.oid)`,
   );
   if (routines.rows.length !== 0) {

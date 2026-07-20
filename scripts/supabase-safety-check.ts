@@ -7,11 +7,14 @@ import { loadAdminConfig } from "../src/config/load-config.js";
 export type Catalog = Record<string, Array<Record<string, unknown>>>;
 type Queryable = { query(sql: string, values?: unknown[]): Promise<{ rows: Array<Record<string, unknown>> }> };
 
-const ACE_ROLES = ["ace_hunter_owner", "ace_hunter_migrator", "ace_hunter_runtime"] as const;
+const ACE_ROLES = ["ace_hunter_owner", "ace_hunter_migrator", "ace_hunter_runtime", "ace_hunter_ops", "ace_hunter_github_runtime", "ace_hunter_mac_worker"] as const;
 const EXPECTED_ROLES: Record<string, Record<string, unknown>> = {
   ace_hunter_owner: role("ace_hunter_owner", false),
   ace_hunter_migrator: role("ace_hunter_migrator", true),
   ace_hunter_runtime: role("ace_hunter_runtime", true),
+  ace_hunter_ops: role("ace_hunter_ops", false),
+  ace_hunter_github_runtime: role("ace_hunter_github_runtime", true),
+  ace_hunter_mac_worker: role("ace_hunter_mac_worker", true),
 };
 
 function role(rolname: string, rolcanlogin: boolean): Record<string, unknown> {
