@@ -57,6 +57,9 @@ describe("immutable release signal acceptance", () => {
 
   it("exercises representative Trending and potential Skill routes through Codex", async () => {
     const continuation = await readFile("scripts/continue-post-merge-release.sh", "utf8");
+    expect(continuation).toContain('resolve-codex-binary.mjs');
+    expect(continuation).toContain('run-codex-skill-smoke.sh');
+    expect(continuation).not.toContain('codex_binary="$(command -v codex)"');
     expect(continuation).toContain(
       "Use $ace-hunter to run ace-hunter trending weekly --format json. Return only the exact JSON tool result.",
     );

@@ -106,13 +106,16 @@ env -i HOME="$HOME" PATH="/usr/bin:/bin" ACE_HUNTER_ENV_FILE="$readonly_env" "$n
 chmod 600 "${smoke_dir}"/*.json
 wrapper="${HOME}/Library/Application Support/AceHunter/bin/ace-hunter"
 "$wrapper" observe "$ACE_E2E_REPOSITORY" --format json >/dev/null
-codex_binary="$(command -v codex)"
-CODEX_HOME="${CODEX_HOME:-$HOME/.codex}" "$codex_binary" exec --skip-git-repo-check 'Use $ace-hunter to list monitored products. Return only the tool result.' >/dev/null
-CODEX_HOME="${CODEX_HOME:-$HOME/.codex}" "$codex_binary" exec --skip-git-repo-check "Use \$ace-hunter to observe ${ACE_E2E_REPOSITORY}. Return only the tool result." >/dev/null
-CODEX_HOME="${CODEX_HOME:-$HOME/.codex}" "$codex_binary" exec --skip-git-repo-check \
+codex_binary="$("$node_path" "${release}/scripts/resolve-codex-binary.mjs")"
+codex_smoke="${release}/scripts/run-codex-skill-smoke.sh"
+CODEX_HOME="${CODEX_HOME:-$HOME/.codex}" "$codex_smoke" "$codex_binary" list \
+  'Use $ace-hunter to list monitored products. Return only the tool result.' >/dev/null
+CODEX_HOME="${CODEX_HOME:-$HOME/.codex}" "$codex_smoke" "$codex_binary" observe \
+  "Use \$ace-hunter to observe ${ACE_E2E_REPOSITORY}. Return only the tool result." >/dev/null
+CODEX_HOME="${CODEX_HOME:-$HOME/.codex}" "$codex_smoke" "$codex_binary" weekly \
   'Use $ace-hunter to run ace-hunter trending weekly --format json. Return only the exact JSON tool result.' \
   >"${smoke_dir}/skill-weekly.json"
-CODEX_HOME="${CODEX_HOME:-$HOME/.codex}" "$codex_binary" exec --skip-git-repo-check \
+CODEX_HOME="${CODEX_HOME:-$HOME/.codex}" "$codex_smoke" "$codex_binary" potential \
   'Use $ace-hunter to run ace-hunter potential --format json. Return only the exact JSON tool result.' \
   >"${smoke_dir}/skill-potential.json"
 chmod 600 "${smoke_dir}/skill-weekly.json" "${smoke_dir}/skill-potential.json"
