@@ -67,7 +67,7 @@ describe("hosted production schedules", () => {
 
     expect(yaml).toContain("strategy:\n      fail-fast: false");
     expect(yaml).toMatch(/matrix:\s+period:\s*\[daily, weekly, monthly\]/u);
-    expect(yaml).not.toContain("max-parallel: 1");
+    expect(yaml).not.toMatch(/max-parallel\s*:\s*["']?1["']?(?:\s|$)/u);
     expect(yaml.match(/job collect_github_trending --period/gu)).toHaveLength(1);
     expect(yaml).toContain("job collect_github_trending --period '${{ matrix.period }}'");
     for (const fixedPeriod of ["daily", "weekly", "monthly"]) {
@@ -120,9 +120,13 @@ it("documents direct deployment-managed Trending and potential routes", async ()
   expect(skill).toContain("不能解释成零讨论");
   expect(skill).toMatch(/^description: .*GitHub 日榜、周榜、月榜、Trending、潜力项目/mu);
   expect(skill).toMatch(/^description: .*查看关注.*取消关注/mu);
-  expect(skill).toContain("潜力、1d、3d、规则或新 Repo");
-  expect(skill).toContain("即使同时说“今日值得关注”");
-  expect(skill).toContain("只有不含上述 GitHub signal 限定");
+  expect(skill).toContain("显式 `analyze`、`observe`、`follow`、`list` 或 `unfollow` 意图优先级最高");
+  expect(skill).toContain("显式 Trending/Potential signal 其次");
+  expect(skill).toContain("“新 Repo”只有与发现、潜力或筛选意图组合时才使用 `potential`");
+  expect(skill).toContain("只有无具体意图的泛化“今日值得关注”才使用 `today`");
+  expect(skill).toContain("“今日值得关注的 3d 潜力项目” → `potential`");
+  expect(skill).toContain("“分析新 Repo owner/repo” → `analyze`");
+  expect(skill).toContain("“观察新 Repo owner/repo” → `observe`");
   expect(manifest).toMatch(/^ {2}display_name: "[^"]+"$/mu);
   expect(manifest).toMatch(/^ {2}short_description: "[^"]+"$/mu);
   expect(manifest).toMatch(/^ {2}default_prompt: "[^"]*\$ace-hunter[^"]*"$/mu);

@@ -19,7 +19,13 @@ Exact GitHub signal routes:
 
 These routes 默认 Top 20. Append `--limit <1-1000>` for a specific count or `--limit all` for every result. Trending and potential requests must use these exact routes and 不得改用 `today`.
 
-Route by the most specific signal intent. If a request includes 潜力、1d、3d、规则或新 Repo, use `potential` 即使同时说“今日值得关注”. 只有不含上述 GitHub signal 限定的泛化“今日值得关注”才使用 `today`.
+Intent priority:
+
+1. 显式 `analyze`、`observe`、`follow`、`list` 或 `unfollow` 意图优先级最高；按对应的既有 route 执行。
+2. 显式 Trending/Potential signal 其次。日榜、周榜、月榜或 Trending 使用对应 `trending` route；潜力、筛选、规则、1d 或 3d 使用 `potential`。“新 Repo”只有与发现、潜力或筛选意图组合时才使用 `potential`。
+3. 只有无具体意图的泛化“今日值得关注”才使用 `today`。
+
+Examples: “今日值得关注的 3d 潜力项目” → `potential`; “分析新 Repo owner/repo” → `analyze`; “观察新 Repo owner/repo” → `observe`.
 
 Other routes:
 
