@@ -3,9 +3,11 @@ import { randomUUID } from "node:crypto";
 import type { Pool } from "pg";
 
 export type WebOutput = Record<string, unknown> & { kind?: string };
+export type TrendingPeriod = "daily" | "weekly" | "monthly";
 
 export interface StoredFactsService {
   today(): Promise<WebOutput>;
+  trending(period: TrendingPeriod): Promise<WebOutput>;
   analyze(target: string): Promise<WebOutput>;
   listMonitors(): Promise<WebOutput>;
   follow(target: string): Promise<WebOutput>;
@@ -27,6 +29,27 @@ export function createStoredFactsService({ pool, userId }: { pool: Pool; userId:
     async today() {
       const row = (await pool.query<{ id: string; status: string; data_cutoff_at: Date; structured_content: unknown }>("select id,status,data_cutoff_at,structured_content from ace_hunter.analysis_outputs where output_type='daily_report' and status in ('complete','partial') order by period_end desc,completed_at desc,id desc limit 1")).rows[0];
       return row ? { kind: "daily_report", id: row.id, status: row.status, dataCutoffAt: row.data_cutoff_at.toISOString(), content: row.structured_content } : { kind: "not_found", reason: "daily_report_unavailable" };
+    },
+    async trending(period) {
+      const rows = (await pool.query<{ rank: number; full_name: string; repo_url: string; language: string; stars_in_period: string | null; stars: string | null; captured_at: Date }>(`with latest_batch as (
+        select max(captured_at) captured_at
+        from ace_hunter.github_trending_snapshots
+        where period=$1
+      )
+      select t.rank,r.full_name,r.repo_url,t.language,t.stars_in_period,s.stars,t.captured_at
+      from ace_hunter.github_trending_snapshots t
+      join latest_batch b on b.captured_at=t.captured_at
+      join ace_hunter.repositories r on r.id=t.repository_id
+      left join lateral (
+        select stars from ace_hunter.repository_snapshots
+        where repository_id=t.repository_id
+        order by captured_at desc,id desc
+        limit 1
+      ) s on true
+      where t.period=$1
+      order by t.rank asc,t.id asc`, [period])).rows;
+      if (rows.length === 0) return { kind: "not_found", reason: "trending_unavailable", period };
+      return { kind: "trending", period, items: rows.map((row) => ({ rank: row.rank, fullName: row.full_name, repoUrl: row.repo_url, language: row.language, starsInPeriod: row.stars_in_period === null ? null : Number(row.stars_in_period), stars: row.stars === null ? null : Number(row.stars), capturedAt: row.captured_at.toISOString() })) };
     },
     async analyze(target) {
       const found = await resolve(target); if (found.kind !== "found") return found;
