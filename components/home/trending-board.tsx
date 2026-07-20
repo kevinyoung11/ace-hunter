@@ -1,6 +1,9 @@
 "use client";
 
 import { useRef, useState } from "react";
+import { formatCapturedAt, formatNumber, formatPeriodStars } from "./trending-format";
+
+export { formatCapturedAt, formatNumber, formatPeriodStars } from "./trending-format";
 
 export type TrendingPeriod = "daily" | "weekly" | "monthly";
 
@@ -221,19 +224,6 @@ function isTrendingRepository(value: unknown): value is TrendingRepository {
       && "language" in value
       && typeof value.language === "string",
   );
-}
-
-export function formatNumber(value: number | null | undefined): string {
-  return typeof value === "number" ? value.toLocaleString("en-US") : "—";
-}
-
-export function formatPeriodStars(value: number | null | undefined): string {
-  return typeof value === "number" ? `${value >= 0 ? "+" : ""}${formatNumber(value)}` : "—";
-}
-
-export function formatCapturedAt(value: string | undefined): string {
-  const captured = value ? new Date(value) : undefined;
-  return captured && !Number.isNaN(captured.valueOf()) ? captured.toISOString().replace("T", " ").slice(0, 16) + " UTC" : "—";
 }
 
 function latestCapturedAt(items: readonly TrendingSkill[], previous?: string): string | undefined {

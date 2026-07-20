@@ -1,4 +1,5 @@
-import { formatCapturedAt, formatNumber, formatPeriodStars, TrendingBoard, type TrendingSkill } from "./trending-board";
+import { TrendingBoard, type TrendingSkill } from "./trending-board";
+import { formatCapturedAt, formatNumber, formatPeriodStars } from "./trending-format";
 
 export type DailyTopSignal = Required<TrendingSkill>;
 
