@@ -16,6 +16,7 @@ export class CommandService {
   }
   public async claim(workerId:string,executor:Executor,capabilities:string[]){return this.commands.call("claim_job_command",[workerId,executor,capabilities]);}
   public async start(commandId:string,workerId:string){return this.commands.call("start_job_command",[commandId,workerId]);}
+  public async lineageReady(commandId:string){return this.commands.lineageReady(commandId);}
   public async bind(commandId:string,workerId:string,jobRunId:string){return this.commands.call("bind_job_run",[commandId,workerId,jobRunId]);}
   public async complete(commandId:string,workerId:string,status:"succeeded"|"partial"|"failed",errorCode?:string,errorMessage?:string){return this.commands.call("complete_job_command",[commandId,workerId,status,errorCode??null,errorMessage??null]);}
   public async cancel(commandId:string,actor:string){return this.commands.call("cancel_job_command",[commandId,actor]);}

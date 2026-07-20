@@ -23,6 +23,7 @@ function deps(overrides: { service?: Record<string, unknown> } = {}) {
     claim: vi.fn(async () => { events.push("claim"); return command(); }),
     start: vi.fn(async () => { events.push("start"); return command({ status: "running" }); }),
     bind: vi.fn(async () => { events.push("bind"); return command({ status: "running", jobRunId: "22222222-2222-4222-8222-222222222222" }); }),
+    lineageReady: vi.fn(async () => true),
     complete: vi.fn(async () => { events.push("complete"); return command({ status: "succeeded" }); }),
     ...overrides.service,
   };

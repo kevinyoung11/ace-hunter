@@ -9,7 +9,7 @@ export const MAC_X_JOBS = ["collect_x_posts", "analyze_x_posts", "collect_x_comm
 type MacXJob = typeof MAC_X_JOBS[number];
 
 export interface MacXWorkerOptions {
-  service: Pick<CommandService, "heartbeat" | "claim" | "start" | "bind" | "complete">;
+  service: Pick<CommandService, "heartbeat" | "claim" | "start" | "bind" | "complete" | "lineageReady">;
   dispatcher: JobDispatcher;
   workerId: string;
   version?: string;
@@ -36,6 +36,9 @@ export class MacXWorker {
     const command = await retryTransient(() => this.options.service.claim(this.options.workerId, "local", [...MAC_X_CAPABILITIES]));
     if (!command) return { processed: false, reason: "idle" };
     this.assertCommand(command);
+    if (!(await this.options.service.lineageReady(command.id))) {
+      throw Object.assign(new Error("x_lineage_not_ready"), { code: "x_lineage_not_ready" });
+    }
     const started = await this.options.service.start(command.id, this.options.workerId);
     if (!started) throw Object.assign(new Error("command_lease_lost"), { code: "command_lease_lost" });
     const input: JobInput = {
@@ -65,7 +68,14 @@ export class MacXWorker {
     const pollSeconds = options.pollSeconds ?? 30;
     if (!Number.isInteger(pollSeconds) || pollSeconds < 1 || pollSeconds > 3600) throw new Error("invalid_poll_seconds");
     do {
-      await this.tick();
+      try {
+        await this.tick();
+      } catch (error) {
+        if (!isTransient(error)) throw error;
+        if (once) throw error;
+        await new Promise((resolve) => setTimeout(resolve, Math.min(pollSeconds * 1000, 60_000)));
+        continue;
+      }
       if (once) return;
       if (options.signal?.aborted) return;
       await new Promise<void>((resolve) => {
@@ -115,4 +125,7 @@ function terminalStatus(status: string): "succeeded" | "partial" | "failed" {
 function safeCode(error: unknown): string {
   const code = error && typeof error === "object" && "code" in error ? (error as { code?: unknown }).code : undefined;
   return typeof code === "string" && /^[a-z][a-z0-9_]{0,63}$/.test(code) ? code : "worker_command_failed";
+}
+function isTransient(error: unknown): boolean {
+  return new Set(["timeout", "network_error", "connection_error", "worker_unavailable"]).has(safeCode(error));
 }

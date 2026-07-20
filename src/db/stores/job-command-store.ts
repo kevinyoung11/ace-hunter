@@ -11,5 +11,6 @@ export class JobCommandStore {
     return map(r.rows[0]);
   }
   public async retry(commandId:string,actor:string):Promise<JobCommand|null>{ return this.call("retry_job_command",[commandId,actor]); }
+  public async lineageReady(commandId:string):Promise<boolean>{ const r=await this.db.query<{ready:boolean}>(`select ace_hunter.x_lineage_ready($1) ready`,[commandId]); return r.rows[0]?.ready===true; }
   public async call(fn:string,args:unknown[]):Promise<JobCommand|null>{ const allowed=new Set(["claim_job_command","start_job_command","bind_job_run","complete_job_command","cancel_job_command","requeue_job_command","retry_job_command"]); if(!allowed.has(fn)) throw new Error("unsupported_command_function"); const r=await this.db.query<Row>(`select * from ace_hunter.${fn}(${args.map((_,i)=>`$${i+1}`).join(",")})`,args); return r.rows[0]?map(r.rows[0]):null; }
 }

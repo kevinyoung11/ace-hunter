@@ -240,6 +240,25 @@ grant execute on function ace_hunter.list_job_definitions() to ace_hunter_ops;
 grant execute on function ace_hunter.record_ops_audit(text,text,text,uuid,jsonb), ace_hunter.list_ops_audit(integer) to ace_hunter_ops, ace_hunter_github_runtime, ace_hunter_mac_worker;
 grant execute on function ace_hunter.claim_job_command(text,text,text[]) to ace_hunter_mac_worker, ace_hunter_github_runtime;
 grant execute on function ace_hunter.start_job_command(uuid,text), ace_hunter.bind_job_run(uuid,text,uuid), ace_hunter.complete_job_command(uuid,text,text,text,text) to ace_hunter_mac_worker, ace_hunter_github_runtime;
+create or replace function ace_hunter.x_lineage_ready(p_command_id uuid)
+returns boolean language plpgsql security definer stable
+set search_path = ace_hunter, pg_catalog as $$
+declare child ace_hunter.job_commands; parent ace_hunter.job_commands; parent_id uuid; child_product text; parent_product text;
+begin
+ select * into child from ace_hunter.job_commands where id=p_command_id;
+ if child.id is null then return false; end if;
+ if child.job_name='collect_x_posts' then return true; end if;
+ parent_id := nullif(child.parameters->'lineage'->>'parent_command_id','')::uuid;
+ if parent_id is null then return false; end if;
+ select * into parent from ace_hunter.job_commands where id=parent_id and status='succeeded';
+ if parent.id is null then return false; end if;
+ if (child.job_name='analyze_x_posts' and parent.job_name <> 'collect_x_posts')
+    or (child.job_name='collect_x_comments' and parent.job_name <> 'analyze_x_posts') then return false; end if;
+ child_product := coalesce(child.parameters->>'productId', child.parameters->>'product_id', child.parameters->'lineage'->>'parent_product_id');
+ parent_product := coalesce(parent.parameters->>'productId', parent.parameters->>'product_id', parent.parameters->'lineage'->>'parent_product_id');
+ return child_product is null or parent_product is null or child_product=parent_product;
+end $$;
+grant execute on function ace_hunter.x_lineage_ready(uuid) to ace_hunter_mac_worker, ace_hunter_github_runtime;
 grant execute on function ace_hunter.cancel_job_command(uuid,text), ace_hunter.requeue_job_command(uuid,text) to ace_hunter_ops;
 grant execute on function ace_hunter.heartbeat_worker(text,text,text[],text,jsonb) to ace_hunter_mac_worker, ace_hunter_github_runtime;
 
