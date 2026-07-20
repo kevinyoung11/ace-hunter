@@ -53,7 +53,9 @@ async function restoreValidSchema() {
 async function tableNames() {
   const result = await adminPool.query<{ table_name: string }>(
     `select table_name from information_schema.tables
-       where table_schema='ace_hunter' and table_name<>'schema_migrations' order by 1`,
+       where table_schema='ace_hunter'
+         and table_name not in ('schema_migrations','job_definitions','job_commands','worker_heartbeats','ops_audit_log')
+       order by 1`,
   );
   return result.rows.map((row) => row.table_name);
 }

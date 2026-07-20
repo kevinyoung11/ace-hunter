@@ -110,7 +110,15 @@ create or replace function ace_hunter.create_job_command(p_job_name text, p_exec
 returns ace_hunter.job_commands language plpgsql security definer volatile
 set search_path = ace_hunter, pg_catalog as $$
 declare result ace_hunter.job_commands;
+declare expected_executor text;
+declare expected_capability text;
 begin
+ select executor, capability into expected_executor, expected_capability
+   from ace_hunter.job_definitions where name=p_job_name;
+ if expected_executor is null then raise exception 'unknown_job' using errcode='22023'; end if;
+ if p_executor <> expected_executor or p_capability <> expected_capability then
+   raise exception 'job_definition_mismatch' using errcode='22023';
+ end if;
  insert into ace_hunter.job_commands(job_name,executor,capability,parameters,idempotency_key,scheduled_for)
  values(p_job_name,p_executor,p_capability,coalesce(p_parameters,'{}'::jsonb),p_idempotency_key,p_scheduled_for)
  on conflict(idempotency_key) do update set idempotency_key=excluded.idempotency_key
