@@ -1,5 +1,0 @@
-import { createServerClient } from "@supabase/ssr";
-import { NextResponse, type NextRequest } from "next/server";
-import { readSupabasePublicConfig } from "./lib/web/environment";
-export async function middleware(request: NextRequest) { const response = NextResponse.next({ request }); const config = readSupabasePublicConfig(); const client = createServerClient(config.supabaseUrl, config.supabasePublishableKey, { cookies: { getAll: () => request.cookies.getAll(), setAll: (items) => items.forEach(({ name, value, options }) => { request.cookies.set(name, value); response.cookies.set(name, value, options); }) } }); const { data: { user } } = await client.auth.getUser(); if (!user && !request.nextUrl.pathname.startsWith("/login") && !request.nextUrl.pathname.startsWith("/auth")) { if (request.nextUrl.pathname.startsWith("/api/")) return NextResponse.json({ code: "unauthenticated" }, { status: 401 }); const url = request.nextUrl.clone(); url.pathname = "/login"; return NextResponse.redirect(url); } return response; }
-export const config = { matcher: ["/", "/analyze", "/monitors", "/api/:path*"] };
