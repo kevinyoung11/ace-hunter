@@ -257,7 +257,7 @@ begin
     or (child.job_name='collect_x_comments' and parent.job_name <> 'analyze_x_posts') then return false; end if;
  child_product := coalesce(child.parameters->>'productId', child.parameters->>'product_id', child.parameters->'lineage'->>'parent_product_id');
  parent_product := coalesce(parent.parameters->>'productId', parent.parameters->>'product_id', parent.parameters->'lineage'->>'parent_product_id');
- return child_product is null or parent_product is null or child_product=parent_product;
+ return child_product is not null and parent_product is not null and child_product=parent_product;
 end $$;
 grant execute on function ace_hunter.x_lineage_ready(uuid) to ace_hunter_mac_worker, ace_hunter_github_runtime;
 grant execute on function ace_hunter.cancel_job_command(uuid,text), ace_hunter.requeue_job_command(uuid,text) to ace_hunter_ops;
