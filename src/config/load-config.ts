@@ -81,11 +81,27 @@ export function loadRuntimeConfig(
 export function loadReadonlyRuntimeConfig(
   env: NodeJS.ProcessEnv | Record<string, string | undefined>,
 ) {
-  const parsed = readonlyRuntimeEnvSchema.safeParse(mergedEnv(env));
+  const processValue = env.ACE_HUNTER_RUNTIME_DATABASE_URL;
+  const databaseUrl = processValue === undefined
+    ? readonlyDatabaseUrlFromFile(env.ACE_HUNTER_ENV_FILE)
+    : processValue;
+  const parsed = readonlyRuntimeEnvSchema.safeParse({
+    ACE_HUNTER_RUNTIME_DATABASE_URL: databaseUrl,
+  });
   if (!parsed.success) {
     throw new Error("Invalid configuration keys: ACE_HUNTER_RUNTIME_DATABASE_URL");
   }
   return { runtimeDatabaseUrl: parsed.data.ACE_HUNTER_RUNTIME_DATABASE_URL };
+}
+
+function readonlyDatabaseUrlFromFile(path: string | undefined): string | undefined {
+  if (path === undefined) return undefined;
+  let databaseUrl: string | undefined;
+  for (const line of readFileSync(path, "utf8").replace(/\r\n?/g, "\n").split("\n")) {
+    if (!/^\s*(?:export\s+)?ACE_HUNTER_RUNTIME_DATABASE_URL(?:\s*=|:\s+)/u.test(line)) continue;
+    databaseUrl = parseStrictDotenv(line).ACE_HUNTER_RUNTIME_DATABASE_URL;
+  }
+  return databaseUrl;
 }
 
 export function loadRedactionRegistry(env: NodeJS.ProcessEnv): string[] {

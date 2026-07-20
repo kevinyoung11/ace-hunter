@@ -73,13 +73,9 @@ export function unavailableDependencies(io: CliIo = processIo): CliDependencies 
 }
 
 async function main(): Promise<void> {
-  let commanderErrorOutput = "";
   const runtime = createLazyProductionCliRuntime(process.env);
-  const program = createProgram(runtime.dependencies).configureOutput({
-    writeErr: (value) => {
-      commanderErrorOutput += value;
-    },
-  });
+  const program = createProgram(runtime.dependencies);
+  configureSafeCommanderErrors(program);
   try {
     await program.parseAsync(process.argv);
   } catch (error) {
@@ -90,17 +86,29 @@ async function main(): Promise<void> {
       process.exitCode = 0;
       return;
     }
+    if (error instanceof CommanderError) {
+      process.stderr.write(`${safeCommanderErrorCode(error)}\n`);
+      process.exitCode = 1;
+      return;
+    }
     log(
       "error",
-      error instanceof CommanderError
-        ? `CLI argument error: ${error.code}`
-        : commanderErrorOutput.trim() || "CLI command failed",
+      "CLI command failed",
       loadRedactionRegistry(process.env),
     );
     process.exitCode = 1;
   } finally {
     await runtime.close();
   }
+}
+
+function configureSafeCommanderErrors(command: Command): void {
+  command.exitOverride().configureOutput({ writeErr: () => undefined });
+  for (const child of command.commands) configureSafeCommanderErrors(child);
+}
+
+function safeCommanderErrorCode(error: CommanderError): "validation_error" | "command_failed" {
+  return error.code.startsWith("commander.") ? "validation_error" : "command_failed";
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
