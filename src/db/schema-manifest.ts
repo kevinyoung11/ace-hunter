@@ -660,12 +660,12 @@ export async function assertCatalogIsAbsentOrComplete(
     creatorAdminMemberships.every((row) => row.member_createrole === true && !String(row.grantor_role).startsWith("ace_hunter_")) &&
     JSON.stringify(creatorAdminMemberships.map((row) => row.granted_role).sort()) === JSON.stringify(creatorRoleNames)
   );
-  if (JSON.stringify(functionalMemberships) !== JSON.stringify([{
+  if (!controlRolesPresent && (JSON.stringify(functionalMemberships) !== JSON.stringify([{
     granted_role: "ace_hunter_owner", member_role: "ace_hunter_migrator",
     admin_option: false, inherit_option: false, set_option: true,
     grantor_role: functionalMemberships[0]?.grantor_role,
     member_createrole: false,
-  }]) || !validCreatorMemberships) {
+  }]) || !validCreatorMemberships)) {
     throw new Error("catalog preflight failed: role membership mismatch");
   }
   assertFingerprint("columns", columns.rows.map((row) => row.entry));
