@@ -1,0 +1,1 @@
+import { guard, output } from "@/lib/ops/http"; export const runtime="nodejs"; export async function GET(req:Request){const g=guard(req);if(g.response)return g.response;return output({sources:["github","x"]},g.id)}

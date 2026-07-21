@@ -30,6 +30,7 @@ const localSchema = z.object({
 }).strict();
 
 interface JobOptions {
+  commandId?: string;
   period?: string;
   scheduledFor?: string;
   cutoffHourUtc?: string;
@@ -56,6 +57,7 @@ export function registerJobCommand(program: Command, dependencies: CliDependenci
     .option("--orchestrator-workflow <name>")
     .option("--scheduler <name>")
     .option("--scheduler-run-id <id>")
+    .option("--command-id <uuid>", "durable command queue id")
     .action(async (name: string, options: JobOptions) => {
       await executeCommand(dependencies.io, async () => {
         let input: JobInput;
@@ -76,12 +78,14 @@ export function registerJobCommand(program: Command, dependencies: CliDependenci
           const parameters = {
             ...parseCoreParameters(options),
             ...attribution,
+            ...(options.commandId !== undefined ? { command_id: canonicalUuidValue(options.commandId) } : {}),
           };
           input = {
             name: jobName,
             triggerType: Object.keys(attribution).length > 0 ? "schedule" : "manual",
             scheduledFor,
             parameters,
+            commandId: options.commandId?.toLowerCase(),
           };
         } catch {
           throw Object.assign(new Error("invalid job attribution"), { code: "invalid_job_attribution" });
@@ -149,6 +153,11 @@ function parseScheduledFor(value: string | undefined, fallback: Date): Date {
 
 function parseJobName(value: string): string {
   return safeText.regex(/^[a-z0-9][a-z0-9_.:-]{0,127}$/).parse(value);
+}
+
+function canonicalUuidValue(value: string): string {
+  if (!canonicalUuid.test(value)) throw new Error("commandId");
+  return value.toLowerCase();
 }
 
 function boundedInteger(value: string, minimum: number, maximum: number): number {

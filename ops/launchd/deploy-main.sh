@@ -11,23 +11,51 @@ script_dir="$(cd "$(dirname "$0")" && pwd -P)"
 repo_root="$(cd "${script_dir}/../.." && pwd -P)"
 transaction_helper="${repo_root}/scripts/release-transaction.mjs"
 integrity_helper="${repo_root}/scripts/release-integrity.mjs"
-git fetch --quiet origin main
-remote_main="$(git rev-parse origin/main)"
-[[ "$main_sha" = "$remote_main" ]] || { printf 'sha_not_remote_main\n' >&2; exit 1; }
-git cat-file -e "${main_sha}^{commit}"
-
+candidate_tmp=""
+candidate_tmp_created=0
+rollback_in_progress=0
+transaction_verified=0
+cleanup_trusted() {
+  if [[ "${candidate_tmp_created:-0}" = 1 && -e "$candidate_tmp" ]]; then
+    rm -rf -- "$candidate_tmp"
+  fi
+  return 0
+}
 node_path="$("${repo_root}/scripts/resolve-node22.sh")"
-"$node_path" "$transaction_helper" verify "$transaction" >/dev/null
 rollback_exit() {
   local status="$1"
+  rollback_in_progress=1
+  trap - EXIT
   trap - ERR HUP INT TERM
+  cleanup_trusted
   "$node_path" "$transaction_helper" rollback "$transaction" >/dev/null || status=1
   exit "$status"
+}
+rollback_on_exit() {
+  local status="$?"
+  if [[ "$status" -ne 0 && "$transaction_verified" -eq 1 && "$rollback_in_progress" -eq 0 ]]; then
+    rollback_in_progress=1
+    trap - EXIT ERR HUP INT TERM
+    cleanup_trusted
+    "$node_path" "$transaction_helper" rollback "$transaction" >/dev/null || status=1
+  else
+    cleanup_trusted
+  fi
+  return "$status"
 }
 trap 'rollback_exit $?' ERR
 trap 'rollback_exit 129' HUP
 trap 'rollback_exit 130' INT
 trap 'rollback_exit 143' TERM
+trap rollback_on_exit EXIT
+
+"$node_path" "$transaction_helper" verify "$transaction" >/dev/null
+transaction_verified=1
+
+git fetch --quiet origin main
+remote_main="$(git rev-parse origin/main)"
+[[ "$main_sha" = "$remote_main" ]] || { printf 'sha_not_remote_main\n' >&2; exit 1; }
+git cat-file -e "${main_sha}^{commit}"
 
 app_dir="${HOME}/Library/Application Support/AceHunter"
 releases_dir="${app_dir}/releases"
@@ -35,25 +63,38 @@ candidate="${releases_dir}/${main_sha}"
 case "$candidate" in *'.config/superpowers/worktrees'*) printf 'worktree_release_rejected\n' >&2; exit 1;; esac
 mkdir -p "$releases_dir" "${app_dir}/bin"
 chmod 700 "$app_dir" "$releases_dir" "${app_dir}/bin"
+candidate_tmp="${releases_dir}/.trusted-${main_sha}.$$"
+trap '' HUP INT TERM
+mkdir "$candidate_tmp" || {
+  mkdir_status=$?
+  trap - ERR HUP INT TERM
+  rollback_exit "$mkdir_status"
+}
+candidate_tmp_created=1
+trap 'rollback_exit $?' ERR
+trap 'rollback_exit 129' HUP
+trap 'rollback_exit 130' INT
+trap 'rollback_exit 143' TERM
+git archive "$main_sha" | tar -x -C "$candidate_tmp"
+node_bin_dir="$(dirname "$node_path")"
+npm_cli="$(realpath "${node_bin_dir}/npm" 2>/dev/null)" || { printf 'node22_npm_not_found\n' >&2; exit 1; }
+[[ -f "$npm_cli" ]] || { printf 'node22_npm_not_found\n' >&2; exit 1; }
+(
+  cd "$candidate_tmp"
+  PATH="${node_bin_dir}:$PATH" "$node_path" "$npm_cli" ci
+  PATH="${node_bin_dir}:$PATH" "$node_path" "$npm_cli" run build
+  PATH="${node_bin_dir}:$PATH" "$node_path" "$npm_cli" run skill:validate
+)
+trusted_digest="$("$node_path" "$integrity_helper" digest "$candidate_tmp")"
 if [[ -e "$candidate" || -L "$candidate" ]]; then
   [[ -d "$candidate" && ! -L "$candidate" ]] || { printf 'release_path_invalid\n' >&2; exit 1; }
-  "$node_path" "$integrity_helper" verify "$candidate" "$main_sha" >/dev/null
+  "$node_path" "$integrity_helper" verify "$candidate" "$main_sha" "$trusted_digest" >/dev/null
 else
-  node_bin_dir="$(dirname "$node_path")"
-  npm_cli="$(realpath "${node_bin_dir}/npm" 2>/dev/null)" || { printf 'node22_npm_not_found\n' >&2; exit 1; }
-  [[ -f "$npm_cli" ]] || { printf 'node22_npm_not_found\n' >&2; exit 1; }
-  candidate_tmp="${releases_dir}/.${main_sha}.$$"
-  mkdir "$candidate_tmp"
-  git archive "$main_sha" | tar -x -C "$candidate_tmp"
-  (cd "$candidate_tmp" &&
-    PATH="${node_bin_dir}:$PATH" "$node_path" "$npm_cli" ci &&
-    PATH="${node_bin_dir}:$PATH" "$node_path" "$npm_cli" run build &&
-    PATH="${node_bin_dir}:$PATH" "$node_path" "$npm_cli" run skill:validate)
   "$node_path" "$integrity_helper" seal "$candidate_tmp" "$main_sha" >/dev/null
-  "$node_path" "$integrity_helper" verify "$candidate_tmp" "$main_sha" >/dev/null
   mv "$candidate_tmp" "$candidate"
 fi
-"$node_path" "$integrity_helper" verify "$candidate" "$main_sha" >/dev/null
+"$node_path" "$integrity_helper" verify "$candidate" "$main_sha" "$trusted_digest" >/dev/null
+[[ -e "$candidate_tmp" ]] && rm -rf "$candidate_tmp"
 ACE_HUNTER_ENV_FILE="$live_env" "$node_path" "${candidate}/dist/src/cli/index.js" list >/dev/null
 "$node_path" "${candidate}/scripts/validate-skill.mjs" "${candidate}/skills/ace-hunter" >/dev/null
 

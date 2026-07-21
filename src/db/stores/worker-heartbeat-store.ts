@@ -1,0 +1,2 @@
+import type { Queryable } from "./queryable.js";
+export class WorkerHeartbeatStore { public constructor(private readonly db:Queryable){} public async heartbeat(input:{workerId:string;executor:string;capabilities:string[];version?:string;metadata?:Record<string,unknown>}){const r=await this.db.query("select * from ace_hunter.heartbeat_worker($1,$2,$3,$4,$5::jsonb)",[input.workerId,input.executor,input.capabilities,input.version??null,JSON.stringify(input.metadata??{})]); return r.rows[0];} }

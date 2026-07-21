@@ -1,5 +1,5 @@
 import { execFile as execFileCallback } from "node:child_process";
-import { chmod, mkdir, mkdtemp, readFile, readlink, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, cp, mkdir, mkdtemp, readdir, readFile, readlink, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -19,6 +19,13 @@ it("builds the immutable release with npm and lifecycle PATH from the selected N
   expect(script).toContain("node22_npm_not_found");
   expect(script).toContain('PATH="${node_bin_dir}:$PATH" "$node_path" "$npm_cli" ci');
   expect(script).not.toContain("npm ci");
+});
+
+it("makes trusted temp cleanup idempotent after the temp is moved", async () => {
+  const script = await readFile("ops/launchd/deploy-main.sh", "utf8");
+  expect(script).toContain("return 0\n");
+  expect(script).toContain('mkdir "$candidate_tmp" || {');
+  expect(script).toContain('rollback_exit "$mkdir_status"');
 });
 
 it("persists the resolver-selected stable Node path in the user wrapper", async () => {
@@ -66,8 +73,7 @@ describe("post-switch minimal signal smokes", () => {
   it("verifies a sealed non-symlink immutable release before first use and reuse", async () => {
     const script = await readFile("ops/launchd/deploy-main.sh", "utf8");
     expect(script).toContain('"$integrity_helper" seal "$candidate_tmp" "$main_sha"');
-    expect(script).toContain('"$integrity_helper" verify "$candidate_tmp" "$main_sha"');
-    expect(script).toContain('"$integrity_helper" verify "$candidate" "$main_sha"');
+    expect(script).toContain('"$integrity_helper" verify "$candidate" "$main_sha" "$trusted_digest"');
     expect(script).toContain('[[ -d "$candidate" && ! -L "$candidate" ]]');
   });
 
@@ -82,7 +88,7 @@ describe("post-switch minimal signal smokes", () => {
     const codexHome = join(root, "codex");
     const wrapper = join(app, "bin", "ace-hunter");
     const skillLink = join(codexHome, "skills", "ace-hunter");
-    const liveEnv = join(root, "runtime.env");
+    const liveEnv = join(app, "runtime.env");
     const fakeBin = join(root, "bin");
     const transaction = join(root, "owner-only", "release-rollback");
     const priorWrapper = "#!/bin/bash\nprintf 'prior wrapper\\n'\n";
@@ -119,9 +125,19 @@ describe("post-switch minimal signal smokes", () => {
         { mode: 0o755 });
       const fakeGit = join(fakeBin, "git");
       await writeFile(fakeGit,
-        `#!/bin/bash\ncase "$1" in fetch|cat-file) exit 0;; rev-parse) printf '%s\\n' '${sha}';; *) exit 1;; esac\n`,
+        `#!/bin/bash
+case "$1" in
+  fetch|cat-file) exit 0;;
+  rev-parse) printf '%s\\n' '${sha}';;
+  archive) tar -C "$FAKE_CANDIDATE" -cf - .;;
+  *) exit 1;;
+esac
+`,
         { mode: 0o755 });
       await chmod(fakeGit, 0o755);
+      const fakeNpm = join(fakeBin, "npm");
+      await writeFile(fakeNpm, "process.exit(['ci', 'run'].includes(process.argv[2]) ? 0 : 1);\n", { mode: 0o755 });
+      await chmod(fakeNpm, 0o755);
       const fakeNode = join(fakeBin, "node");
       await writeFile(fakeNode, `#!/bin/bash
 if [[ "\${1:-}" = --version ]]; then printf 'v22.17.0\\n'; exit 0; fi
@@ -137,18 +153,23 @@ esac
 `, { mode: 0o755 });
       await chmod(fakeLaunchctl, 0o755);
       await execFile("node", ["scripts/release-integrity.mjs", "seal", candidate, sha], { cwd: process.cwd() });
+      const archiveCandidate = join(releases, "archive-source");
+      await cp(candidate, archiveCandidate, { recursive: true });
+      await rm(candidate, { recursive: true, force: true });
       await execFile("node", ["scripts/release-transaction.mjs", "begin", transaction, app, codexHome], {
         cwd: process.cwd(), env: { ...process.env, HOME: home, PATH: `${fakeBin}:${process.env.PATH}` },
       });
 
-      await expect(execFile("bash", ["ops/launchd/deploy-main.sh", sha, liveEnv, transaction], {
+      const deploy = execFile("bash", ["ops/launchd/deploy-main.sh", sha, liveEnv, transaction], {
         cwd: process.cwd(),
-        env: { ...process.env, HOME: home, CODEX_HOME: codexHome, PATH: `${fakeBin}:${process.env.PATH}` },
-      })).rejects.toMatchObject({ code: 23 });
+        env: { ...process.env, HOME: home, CODEX_HOME: codexHome, FAKE_CANDIDATE: archiveCandidate, PATH: `${fakeBin}:${process.env.PATH}` },
+      });
+      await expect(deploy).rejects.toMatchObject({ code: 23 });
 
       expect(await readlink(join(app, "current"))).toBe(prior);
       expect(await readFile(wrapper, "utf8")).toBe(priorWrapper);
       expect(await readlink(skillLink)).toBe(join(prior, "skills", "ace-hunter"));
+      expect((await readdir(releases)).filter((entry) => entry.startsWith(".trusted-")).length).toBe(0);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

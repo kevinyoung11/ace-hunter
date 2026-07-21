@@ -1,0 +1,1 @@
+import { guard, output, fail } from "@/lib/ops/http"; import { opsService } from "@/lib/ops/service"; export const runtime="nodejs"; export async function GET(req:Request){const g=guard(req);if(g.response)return g.response;try{return output({entries:await opsService().audit.list()},g.id)}catch{return fail("ops_database_error",503,g.id)}}

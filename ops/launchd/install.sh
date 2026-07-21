@@ -3,15 +3,19 @@ set -euo pipefail
 umask 077
 
 [[ "$(uname -s)" = Darwin ]] || { printf 'macos_required\n' >&2; exit 1; }
-[[ ( $# -eq 2 || $# -eq 3 ) && "$1" = /* && "$2" =~ ^(enable|preserve)$ ]] || { printf 'usage_error\n' >&2; exit 1; }
+[[ ( $# -eq 2 || $# -eq 3 || $# -eq 4 ) && "$1" = /* && "$2" =~ ^(enable|preserve)$ ]] || { printf 'usage_error\n' >&2; exit 1; }
 launchd_mode="${2:-enable}"
 [[ "$launchd_mode" = enable || "$launchd_mode" = preserve ]] || { printf 'usage_error\n' >&2; exit 1; }
+allow_x_unavailable=false
+[[ "${4:-}" = "--allow-x-unavailable" ]] && allow_x_unavailable=true
+[[ -z "${4:-}" || "$allow_x_unavailable" = true ]] || { printf 'usage_error\n' >&2; exit 1; }
 release_root="$(realpath "$1")"
 case "$release_root" in
   "$HOME/Library/Application Support/AceHunter/releases/"*) ;;
   *) printf 'invalid_release_root\n' >&2; exit 1 ;;
 esac
 [[ -x "${release_root}/scripts/run-scheduled-x.sh" ]] || { printf 'release_incomplete\n' >&2; exit 1; }
+[[ -x "${release_root}/scripts/run-local-worker.sh" ]] || { printf 'release_incomplete\n' >&2; exit 1; }
 runtime_env="${3:-${HOME}/Library/Application Support/AceHunter/runtime.env}"
 file_owner() { [[ "$(uname -s)" = Darwin ]] && stat -f '%u' "$1" || stat -c '%u' "$1"; }
 file_mode() { [[ "$(uname -s)" = Darwin ]] && stat -f '%Lp' "$1" || stat -c '%a' "$1"; }
@@ -31,6 +35,9 @@ node_persistent_path="$("${release_root}/scripts/resolve-node22.sh")"
 node_path="$(verify_binary "$node_persistent_path")" || { printf 'unsafe_node_binary\n' >&2; exit 1; }
 twitter_path="$(verify_binary "$(command -v twitter)")" || { printf 'unsafe_twitter_binary\n' >&2; exit 1; }
 "$node_path" --version >/dev/null
+if ! "$node_path" "${release_root}/dist/scripts/assert-twitter-preflight.js" --env-file "$runtime_env"; then
+  [[ "$allow_x_unavailable" = true ]] || { printf 'x_preflight_required\n' >&2; exit 1; }
+fi
 # X is an auxiliary source.  Its remote availability must not prevent the
 # GitHub-facing Skill and its owner-only runtime configuration from installing.
 # The scheduled X job performs this preflight when it actually runs.
@@ -79,7 +86,7 @@ chmod 600 "$config_tmp"
 mv -f "$config_tmp" "${app_dir}/scheduler.conf"
 
 cp "${release_root}/ops/launchd/com.kevinyoung.ace-hunter.collect-x.plist" "${agent}.tmp"
-/usr/libexec/PlistBuddy -c "Set :ProgramArguments:0 ${release_root}/scripts/run-scheduled-x.sh" "${agent}.tmp"
+/usr/libexec/PlistBuddy -c "Set :ProgramArguments:0 ${release_root}/scripts/run-local-worker.sh" "${agent}.tmp"
 /usr/libexec/PlistBuddy -c "Set :StandardOutPath ${log_dir}/collect-x.log" "${agent}.tmp"
 /usr/libexec/PlistBuddy -c "Set :StandardErrorPath ${log_dir}/collect-x.error.log" "${agent}.tmp"
 plutil -lint "${agent}.tmp" >/dev/null

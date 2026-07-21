@@ -64,6 +64,13 @@ esac
 });
 afterEach(async () => { await rm(root, { recursive: true, force: true }); });
 
+it("rejects extra or missing action arguments", async () => {
+  await expect(execFile("node", ["scripts/release-transaction.mjs", "verify", tx, "extra"], { cwd: process.cwd() }))
+    .rejects.toMatchObject({ stderr: expect.stringContaining("release_transaction_usage_error") });
+  await expect(execFile("node", ["scripts/release-transaction.mjs", "begin", tx, app], { cwd: process.cwd() }))
+    .rejects.toMatchObject({ stderr: expect.stringContaining("release_transaction_usage_error") });
+});
+
 it("restores a loaded and enabled prior LaunchAgent exactly and makes rollback idempotent", async () => {
   const prior = join(app, "releases", "prior");
   const next = join(app, "releases", "next");
@@ -83,6 +90,7 @@ it("restores a loaded and enabled prior LaunchAgent exactly and makes rollback i
   expect(state).toMatchObject({
       version: 3,
     launchd: { loaded: true, disabledOverride: false },
+    externalDatabase: { passwordState: "not_modified" },
   });
   expect((await stat(tx)).mode & 0o777).toBe(0o700);
   expect((await stat(join(tx, "state.json"))).mode & 0o777).toBe(0o600);
@@ -119,6 +127,13 @@ it("restores a loaded and enabled prior LaunchAgent exactly and makes rollback i
 
   await run("rollback", { loaded: "false", disabled: "true" });
   expect(await launchctlCalls()).toEqual(callsAfterFirstRollback);
+});
+
+it("tracks external database password mutation as manual recovery state", async () => {
+  await run("begin", { loaded: "false", disabled: "absent" });
+  await execFile("node", ["scripts/release-transaction.mjs", "mark-external-db-modified", tx], { cwd: process.cwd(), env: { ...process.env, HOME: home, PATH: `${fakeBin}:${process.env.PATH}` } });
+  const state = JSON.parse(await readFile(join(tx, "state.json"), "utf8"));
+  expect(state.externalDatabase.passwordState).toBe("modified_requires_manual_recovery");
 });
 
 it("restores a prior plist that was unloaded and disabled without starting it", async () => {

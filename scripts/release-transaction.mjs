@@ -5,18 +5,21 @@ import {
 import { dirname, isAbsolute, join } from "node:path";
 import process from "node:process";
 
-const [action, transaction, appDir, codexHome] = process.argv.slice(2);
+const args = process.argv.slice(2);
+const [action, transaction, appDir, codexHome] = args;
 const agentName = "com.kevinyoung.ace-hunter.collect-x.plist";
 const agentLabel = agentName.replace(/\.plist$/u, "");
 
 try {
-  if (!isAbsolute(transaction ?? "") || !["begin", "verify", "rollback", "commit", "launchd-mode"].includes(action)) {
+  const expectedArgCount = action === "begin" ? 4 : ["verify", "rollback", "commit", "launchd-mode", "mark-external-db-modified"].includes(action) ? 2 : -1;
+  if (args.length !== expectedArgCount || !isAbsolute(transaction ?? "") || !["begin", "verify", "rollback", "commit", "launchd-mode", "mark-external-db-modified"].includes(action)) {
     throw new Error("release_transaction_usage_error");
   }
   if (action === "begin") await begin();
   else if (action === "verify") await loadState("active");
   else if (action === "rollback") await rollback();
   else if (action === "commit") await commit();
+  else if (action === "mark-external-db-modified") await markExternalDbModified();
   else {
     const state = await loadState("active");
     process.stdout.write(state.launchd.disabledOverride === true ? "enable\n" : "preserve\n");
@@ -52,7 +55,10 @@ async function begin() {
   if (launchd.loaded && artifacts.agent.state !== "file") {
     throw new Error("release_transaction_launchd_state_unrestorable");
   }
-  await writeState({ version: 3, status: "active", uid: process.getuid?.(), paths, artifacts, launchd });
+  // Local artifacts are rollback-safe; external database role passwords are
+  // intentionally not claimed reversible by this transaction.
+  await writeState({ version: 3, status: "active", uid: process.getuid?.(), paths, artifacts, launchd,
+    externalDatabase: { passwordState: "not_modified" } });
 }
 
 function probeLaunchd(domain) {
@@ -141,6 +147,12 @@ async function commit() {
   await writeState(state);
 }
 
+async function markExternalDbModified() {
+  const state = await loadState("active");
+  state.externalDatabase.passwordState = "modified_requires_manual_recovery";
+  await writeState(state);
+}
+
 async function loadState(expectedStatus) {
   await assertOwnerOnly(transaction);
   const statePath = join(transaction, "state.json");
@@ -153,7 +165,8 @@ async function loadState(expectedStatus) {
     typeof state.launchd?.disabledOverride === "boolean";
   if (state.version !== 3 || state.uid !== process.getuid?.() || typeof state.paths !== "object" ||
       typeof state.artifacts !== "object" || typeof state.status !== "string" ||
-      typeof state.launchd?.loaded !== "boolean" || !validDisabledOverride) throw new Error("release_transaction_invalid");
+      typeof state.launchd?.loaded !== "boolean" || !validDisabledOverride ||
+      !["not_modified", "modified_requires_manual_recovery"].includes(state.externalDatabase?.passwordState)) throw new Error("release_transaction_invalid");
   if (expectedStatus !== undefined && state.status !== expectedStatus) throw new Error("release_transaction_not_active");
   return state;
 }

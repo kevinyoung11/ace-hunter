@@ -1,0 +1,4 @@
+import { guard, output, fail, json } from "@/lib/ops/http"; import { opsService } from "@/lib/ops/service";
+export const runtime="nodejs";
+export async function GET(req:Request){const g=guard(req);if(g.response)return g.response;try{return output({jobs:await opsService().jobs.list()},g.id)}catch{return fail("ops_database_error",503,g.id)}}
+export async function POST(req:Request){const g=guard(req,true);if(g.response)return g.response;try{const b=await json(req);if(typeof b.name!=="string")return fail("invalid_job",400,g.id);return output(await opsService().createCommand(b.name,b,"ops-api"),g.id,201)}catch(e){const c=e instanceof Error&&e.message==="request_too_large"?"request_too_large":e instanceof Error&&/unknown_job/.test(e.message)?"unknown_job":e instanceof Error&&e.message==="invalid_json"?"invalid_json":"invalid_job_request";return fail(c,c==="request_too_large"?413:400,g.id)}}

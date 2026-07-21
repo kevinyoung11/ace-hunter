@@ -1,0 +1,2 @@
+import type { Queryable } from "./queryable.js";
+export class OpsAuditStore { public constructor(private readonly db:Queryable){} public async record(input:{actor:string;action:string;jobName?:string;commandId?:string;details?:Record<string,unknown>}){await this.db.query("select * from ace_hunter.record_ops_audit($1,$2,$3,$4,$5::jsonb)",[input.actor,input.action,input.jobName??null,input.commandId??null,JSON.stringify(input.details??{})]);} public async list(limit=100){const r=await this.db.query("select * from ace_hunter.list_ops_audit($1)",[limit]); return r.rows;} }

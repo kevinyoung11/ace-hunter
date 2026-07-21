@@ -115,6 +115,7 @@ it("starts read-only commands without GitHub, X, model, or user credentials", as
     exit: (code: CliExitCode) => exitCodes.push(code),
   };
   const runtime = createLazyProductionCliRuntime({
+    NODE_ENV: "test",
     ACE_HUNTER_RUNTIME_DATABASE_URL: config.runtimeDatabaseUrl,
   }, io);
   try {

@@ -10,11 +10,25 @@ const temporary: string[] = [];
 afterEach(async () => Promise.all(temporary.splice(0).map((path) => rm(path, { recursive: true, force: true }))));
 
 describe("launchd X wrapper", () => {
+  it("requires database preflight before every X stage", async () => {
+    const script = await readFile("scripts/run-scheduled-x.sh", "utf8");
+    expect(script.match(/verify-runtime-credential\.js/g)?.length).toBe(1);
+    expect(script).toContain("for job in collect_x_posts analyze_x_posts collect_x_comments");
+  });
   it("uses a six-hour launch agent without embedding runtime secrets", async () => {
     const plist = await readFile("ops/launchd/com.kevinyoung.ace-hunter.collect-x.plist", "utf8");
     expect(plist).toContain("<key>StartInterval</key>\n  <integer>21600</integer>");
     expect(plist).toContain("<key>RunAtLoad</key>\n  <true/>");
     expect(plist).not.toMatch(/github[_-]?token|database[_-]?url|deepseek[_-]?api[_-]?key/i);
+  });
+
+  it("stages the durable local worker wrapper without removing the legacy scheduler", async () => {
+    const install = await readFile("ops/launchd/install.sh", "utf8");
+    const worker = await readFile("scripts/run-local-worker.sh", "utf8");
+    expect(install).toContain("run-local-worker.sh");
+    expect(install).toContain("run-scheduled-x.sh");
+    expect(worker).toContain("x-worker.lock");
+    expect(worker).toContain("ACE_HUNTER_WORKER_ID");
   });
 
   it.each([

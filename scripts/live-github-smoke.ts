@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { Pool } from "pg";
 import { loadRuntimeConfig } from "../src/config/load-config.js";
 import { GitHubHttpClientFactory } from "../src/sources/github/github-http-client.js";
@@ -69,7 +70,8 @@ try {
 
 async function runAceHunter(args: string[]): Promise<void> {
   await new Promise<void>((resolve, reject) => {
-    const child = spawn(process.execPath, ["dist/src/cli/index.js", ...args], {
+    const entry = existsSync("dist/src/cli/index.js") ? ["dist/src/cli/index.js"] : ["--import", "tsx", "src/cli/index.ts"];
+    const child = spawn(process.execPath, [...entry, ...args], {
       env: process.env,
       shell: false,
       stdio: "ignore",

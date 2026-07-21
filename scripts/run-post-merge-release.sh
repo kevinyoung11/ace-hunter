@@ -22,8 +22,7 @@ git merge-base --is-ancestor "$pr_head" "$main_sha"
 app_dir="${HOME}/Library/Application Support/AceHunter"
 credential_store="${app_dir}/runtime-credentials.env"
 credential_mode=release
-[[ -f "$credential_store" ]] || credential_mode=bootstrap
-live_env="$("$node_path" --import tsx scripts/prepare-live-env.ts --mode "$credential_mode" --source "$SOURCE_ENV" --credential-store "$credential_store")"
+live_env="$("$node_path" --import tsx scripts/prepare-live-env.ts --mode release --source "$SOURCE_ENV" --credential-store "$credential_store")"
 live_env="$(realpath "$live_env")"
 live_dir="$(dirname "$live_env")"
 temp_base="${TMPDIR:-/tmp}"; temp_base="$(realpath "${temp_base%/}")"

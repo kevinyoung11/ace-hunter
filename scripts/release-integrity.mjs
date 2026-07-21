@@ -5,14 +5,22 @@ import {
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import process from "node:process";
 
-const [action, releaseArg, expectedSha] = process.argv.slice(2);
+const args = process.argv.slice(2);
+const [action, releaseArg, expectedSha, trustedDigest] = args;
 const manifestName = "release-manifest.json";
 
 try {
-  if (!(["seal", "verify"].includes(action)) || !isAbsolute(releaseArg ?? "") ||
-      !/^[a-f0-9]{40}$/u.test(expectedSha ?? "")) throw new Error("release_integrity_usage_error");
+  const expectedArgCount = action === "digest" ? 2 : action === "seal" ? 3 : action === "verify" ? 4 : -1;
+  if (args.length !== expectedArgCount) throw new Error("release_integrity_usage_error");
+  if (!(["seal", "verify", "digest"].includes(action)) || !isAbsolute(releaseArg ?? "") ||
+      (action !== "digest" && !/^[a-f0-9]{40}$/u.test(expectedSha ?? "")) ||
+      (action === "verify" && !/^[a-f0-9]{64}$/u.test(trustedDigest ?? ""))) {
+    throw new Error("release_integrity_usage_error");
+  }
   const release = await validateRoot(resolve(releaseArg));
-  if (action === "seal") {
+  if (action === "digest") {
+    process.stdout.write(`${await hashTree(release)}\n`);
+  } else if (action === "seal") {
     await rm(join(release, manifestName), { force: true });
     const contentSha256 = await hashTree(release);
     const manifest = { sha: expectedSha, content_sha256: contentSha256 };
@@ -32,7 +40,9 @@ try {
         parsed.sha !== expectedSha || !/^[a-f0-9]{64}$/u.test(parsed.content_sha256)) {
       throw new Error("release_manifest_invalid");
     }
-    if (await hashTree(release) !== parsed.content_sha256) throw new Error("release_integrity_mismatch");
+    const computedDigest = await hashTree(release);
+    if (computedDigest !== trustedDigest) throw new Error("release_trusted_digest_mismatch");
+    if (computedDigest !== parsed.content_sha256) throw new Error("release_integrity_mismatch");
     process.stdout.write("release_integrity_verified\n");
   }
 } catch (error) {

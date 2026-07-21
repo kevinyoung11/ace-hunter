@@ -9,6 +9,7 @@ import {
   parseSourceDotenv,
   serializeDotenv,
   setFixedRolePassword,
+  recoverFixedRoleCredentials,
 } from "../../../scripts/prepare-live-env.js";
 
 const temporaryDirectories: string[] = [];
@@ -124,5 +125,72 @@ describe("prepare-live-env safety helpers", () => {
     expect(keychain.delete).toHaveBeenCalledWith("runtime-database-url");
     expect(query).toHaveBeenCalledWith("alter role ace_hunter_migrator nologin");
     expect(query).toHaveBeenCalledWith("alter role ace_hunter_runtime nologin");
+  });
+
+  it("rejects a syntactically valid but unreachable release DSN without exposing it", async () => {
+    const keychain = { get: async (account: string) => account.startsWith("migration")
+      ? "postgres://ace_hunter_migrator:secret@127.0.0.1:1/db"
+      : "postgres://ace_hunter_runtime:secret@127.0.0.1:1/db", set: vi.fn(), delete: vi.fn() };
+    await expect(fixedRoleCredentials({ mode: "release", keychain, admin: { query: vi.fn() }, adminUrl: "postgres://admin:x@127.0.0.1:1/db" }))
+      .rejects.toThrow("database_credential_invalid");
+    await expect(fixedRoleCredentials({ mode: "release", keychain, admin: { query: vi.fn() }, adminUrl: "postgres://admin:x@127.0.0.1:1/db" }))
+      .rejects.not.toThrow("secret");
+  });
+
+  it("only atomically replaces credentials after read and rollback-scoped write probes", async () => {
+    const store = { get: vi.fn(async (account: string) => account.startsWith("migration") ? "old-migration" : "old-runtime"), set: vi.fn(), setPair: vi.fn(), delete: vi.fn() };
+    const admin = { query: vi.fn() };
+    const result = await recoverFixedRoleCredentials({
+      keychain: store,
+      adminUrl: "postgres://admin:x@db.example.test:5432/postgres",
+      admin,
+      migrationUrl: "postgres://ace_hunter_migrator:new@db.example.test:5432/postgres",
+      runtimeUrl: "postgres://ace_hunter_runtime:new@db.example.test:5432/postgres",
+      verify: vi.fn(async () => undefined),
+    });
+    expect(result).toEqual({ migrationUrl: expect.any(String), runtimeUrl: expect.any(String) });
+    expect(store.setPair).toHaveBeenCalled();
+  });
+
+  it("fails recovery when the store cannot atomically replace both DSNs", async () => {
+    const store = { get: vi.fn(async () => "old"), set: vi.fn(), delete: vi.fn() };
+    await expect(recoverFixedRoleCredentials({ keychain: store, admin: { query: vi.fn() }, adminUrl: "postgres://admin:x@db.example.test:5432/postgres", migrationUrl: "postgres://ace_hunter_migrator:new@db.example.test:5432/postgres", runtimeUrl: "postgres://ace_hunter_runtime:new@db.example.test:5432/postgres", verify: vi.fn(async () => undefined) })).rejects.toThrow("modified_requires_manual_recovery");
+    expect(store.set).not.toHaveBeenCalled();
+  });
+
+  it("restores both old role passwords when candidate store replacement fails", async () => {
+    const oldMigration = "postgres://ace_hunter_migrator:old-m@db.example.test:5432/postgres";
+    const oldRuntime = "postgres://ace_hunter_runtime:old-r@db.example.test:5432/postgres";
+    const query = vi.fn(async () => { throw new Error("set_pair_failed"); });
+    const store = { get: vi.fn(async (account: string) => account.startsWith("migration") ? oldMigration : oldRuntime), setPair: vi.fn(async () => { throw new Error("set_pair_failed"); }), set: vi.fn(), delete: vi.fn() };
+    await expect(recoverFixedRoleCredentials({ keychain: store, admin: { query }, adminUrl: "postgres://admin:x@db.example.test:5432/postgres", migrationUrl: "postgres://ace_hunter_migrator:new-m@db.example.test:5432/postgres", runtimeUrl: "postgres://ace_hunter_runtime:new-r@db.example.test:5432/postgres", verify: vi.fn(async () => undefined) })).rejects.toThrow("modified_requires_manual_recovery");
+  });
+
+  it("requires recovery mode to provide candidate role passwords", async () => {
+    expect(() => parseSourceDotenv("ACE_HUNTER_ADMIN_DATABASE_URL=postgres://admin:x@db/postgres\n")).not.toThrow();
+  });
+
+  it("snapshots persistent runtime.env and unconditionally attempts both role restorations", async () => {
+    const source = await readFile("scripts/prepare-live-env.ts", "utf8");
+    expect(source).toContain("const oldRuntimeEnvContents");
+    expect(source).toContain("new URL(oldMigration).password");
+    expect(source).toContain("new URL(oldRuntime).password");
+    expect(source).toContain("modified_requires_manual_recovery");
+  });
+
+  it("does not short-circuit compensation when the first old-role restore fails", async () => {
+    const source = await readFile("scripts/prepare-live-env.ts", "utf8");
+    expect(source).toContain("const compensationFailures: unknown[] = []");
+    expect(source).toContain("compensationFailures.push(error)");
+    expect(source).toContain("setPair(oldMigration, oldRuntime)");
+    expect(source).toContain("await rename(restorePath, options.runtimeEnvPath)");
+  });
+
+  it("uses independent compensation for exported recovery precondition failures", async () => {
+    const source = await readFile("scripts/prepare-live-env.ts", "utf8");
+    expect(source).toContain("const compensationFailures: unknown[] = []");
+    expect(source).toContain("const attempt = async");
+    expect(source).toContain("let mutationStarted = false");
+    expect(source).toContain("if (mutationStarted || temporary)");
   });
 });

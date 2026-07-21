@@ -11,6 +11,15 @@ begin
   if not exists (select 1 from pg_roles where rolname = 'ace_hunter_runtime') then
     create role ace_hunter_runtime;
   end if;
+  if not exists (select 1 from pg_roles where rolname = 'ace_hunter_ops') then
+    create role ace_hunter_ops;
+  end if;
+  if not exists (select 1 from pg_roles where rolname = 'ace_hunter_github_runtime') then
+    create role ace_hunter_github_runtime;
+  end if;
+  if not exists (select 1 from pg_roles where rolname = 'ace_hunter_mac_worker') then
+    create role ace_hunter_mac_worker;
+  end if;
 end
 $$;
 
@@ -116,6 +125,9 @@ $ace_external_audit$;
 alter role ace_hunter_owner nologin nosuperuser nocreatedb nocreaterole noinherit noreplication nobypassrls;
 alter role ace_hunter_migrator login password 'test-migrator' nosuperuser nocreatedb nocreaterole noinherit noreplication nobypassrls;
 alter role ace_hunter_runtime login password 'test-runtime' nosuperuser nocreatedb nocreaterole noinherit noreplication nobypassrls;
+alter role ace_hunter_ops nologin nosuperuser nocreatedb nocreaterole noinherit noreplication nobypassrls;
+alter role ace_hunter_github_runtime login password 'test-github-runtime' nosuperuser nocreatedb nocreaterole noinherit noreplication nobypassrls;
+alter role ace_hunter_mac_worker login password 'test-mac-worker' nosuperuser nocreatedb nocreaterole noinherit noreplication nobypassrls;
 
 do $$
 declare

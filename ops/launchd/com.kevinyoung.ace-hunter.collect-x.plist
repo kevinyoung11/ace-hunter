@@ -6,7 +6,7 @@
   <string>com.kevinyoung.ace-hunter.collect-x</string>
   <key>ProgramArguments</key>
   <array>
-    <string>__ACE_HUNTER_SCHEDULED_WRAPPER__</string>
+    <string>__ACE_HUNTER_WORKER_WRAPPER__</string>
   </array>
   <key>RunAtLoad</key>
   <true/>

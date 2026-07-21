@@ -13,6 +13,23 @@ export const businessTables = [
   "user_product_monitors",
 ] as const;
 
+/** Migration bookkeeping is infrastructure, not a business or control-plane table. */
+export const migrationHistoryTable = "schema_migrations";
+
+/**
+ * Control-plane objects deliberately have their own manifest boundary.  Task 1
+ * has no such objects yet; later versioned migrations extend this list without
+ * weakening validation of the published business catalog.
+ */
+export const controlPlaneTables = [
+  "job_definitions",
+  "job_commands",
+  "worker_heartbeats",
+  "ops_audit_log",
+] as const;
+
+const businessRelationPredicate = `(table_object.relname <> 'schema_migrations' and table_object.relname not in (${controlPlaneTables.map((name) => `'${name}'`).join(",")}))`;
+
 const expectedConstraints = [
   "c:analysis_outputs_confidence_check:",
   "f:analysis_outputs_monitor_id_fkey:n",
@@ -134,6 +151,7 @@ export async function assertCatalogIsAbsentOrComplete(
        join pg_namespace namespace_object on namespace_object.oid=routine.pronamespace
        join pg_language language on language.oid=routine.prolang
       where namespace_object.nspname='ace_hunter'
+        and routine.proname not in ('claim_job_command','claim_job_command_by_id','start_job_command','bind_job_run','complete_job_command','cancel_job_command','requeue_job_command','heartbeat_worker','create_job_command','list_job_definitions','get_job_command','record_ops_audit','list_ops_audit','x_lineage_ready','set_job_enabled','retry_job_command')
       order by routine.proname,pg_get_function_identity_arguments(routine.oid)`,
   );
   if (routines.rows.length !== 0) {
@@ -209,8 +227,9 @@ export async function assertCatalogIsAbsentOrComplete(
     owner: string;
   }>(
     `select c.relname,c.relkind,c.relpersistence,pg_get_userbyid(c.relowner) owner
-       from pg_class c join pg_namespace n on n.oid=c.relnamespace
-      where n.nspname='ace_hunter' and c.relkind in ('r','v','m','S','f','p') order by 1`,
+       from pg_catalog.pg_class c join pg_catalog.pg_namespace n on n.oid=c.relnamespace
+      where n.nspname='ace_hunter' and c.relname not in ('schema_migrations','job_definitions','job_commands','worker_heartbeats','ops_audit_log')
+        and c.relkind in ('r','v','m','f','p') order by 1`,
   );
   if (relations.rows.length === 0) return "empty";
 
@@ -227,6 +246,18 @@ export async function assertCatalogIsAbsentOrComplete(
   ) {
     throw new Error("catalog preflight failed: table manifest mismatch");
   }
+
+  const controlRelations = await client.query<{ relname: string; owner: string }>(
+    `select c.relname,pg_get_userbyid(c.relowner) owner
+       from pg_catalog.pg_class c join pg_catalog.pg_namespace n on n.oid=c.relnamespace
+      where n.nspname='ace_hunter' and c.relkind='r' and c.relname = any($1::text[]) order by 1`,
+    [controlPlaneTables],
+  );
+  if (
+    controlRelations.rows.length !== 0 &&
+    (controlRelations.rows.length !== controlPlaneTables.length ||
+      controlRelations.rows.some((row) => row.owner !== "ace_hunter_owner"))
+  ) throw new Error("catalog preflight failed: control-plane table manifest mismatch");
 
   const columns = await client.query<{ entry: string }>(
     `select table_object.relname||'|'||column_object.attnum||'|'||
@@ -255,6 +286,7 @@ export async function assertCatalogIsAbsentOrComplete(
          on column_default.adrelid=table_object.oid
         and column_default.adnum=column_object.attnum
       where table_namespace.nspname='ace_hunter' and table_object.relkind='r'
+        and ${businessRelationPredicate}
         and column_object.attnum>0 and not column_object.attisdropped
       order by table_object.relname,column_object.attnum`,
   );
@@ -265,14 +297,14 @@ export async function assertCatalogIsAbsentOrComplete(
        join pg_class ci on ci.oid=i.indexrelid
        join pg_class ct on ct.oid=i.indrelid
        join pg_namespace n on n.oid=ct.relnamespace
-      where n.nspname='ace_hunter'
+      where n.nspname='ace_hunter' and ct.relname not in ('schema_migrations','job_definitions','job_commands','worker_heartbeats','ops_audit_log')
       order by ci.relname`,
   );
   const checks = await client.query<{ entry: string }>(
     `select c.conname||'|'||
             regexp_replace(pg_get_expr(c.conbin,c.conrelid,false),'[[:space:]]+',' ','g') entry
-       from pg_constraint c join pg_namespace n on n.oid=c.connamespace
-      where n.nspname='ace_hunter' and c.contype='c'
+       from pg_constraint c join pg_namespace n on n.oid=c.connamespace join pg_class table_object on table_object.oid=c.conrelid
+      where n.nspname='ace_hunter' and c.contype='c' and table_object.relname not in ('schema_migrations','job_definitions','job_commands','worker_heartbeats','ops_audit_log')
       order by c.conname`,
   );
   const foreignKeys = await client.query<{ entry: string }>(
@@ -293,7 +325,7 @@ export async function assertCatalogIsAbsentOrComplete(
        join pg_attribute target_column
          on target_column.attrelid=target.oid
         and target_column.attnum=c.confkey[local_key.ord]
-      where source_namespace.nspname='ace_hunter' and c.contype='f'
+      where source_namespace.nspname='ace_hunter' and c.contype='f' and src.relname not in ('schema_migrations','job_definitions','job_commands','worker_heartbeats','ops_audit_log')
       group by c.conname,src.relname,target_namespace.nspname,target.relname,
                c.confdeltype,c.confupdtype,c.confmatchtype,c.condeferrable,
                c.condeferred,c.convalidated
@@ -305,8 +337,8 @@ export async function assertCatalogIsAbsentOrComplete(
     confdeltype: string | null;
   }>(
     `select c.conname,c.contype,case when c.contype='f' then c.confdeltype::text end confdeltype
-       from pg_constraint c join pg_namespace n on n.oid=c.connamespace
-      where n.nspname='ace_hunter' order by c.conname`,
+       from pg_constraint c join pg_namespace n on n.oid=c.connamespace join pg_class table_object on table_object.oid=c.conrelid
+      where n.nspname='ace_hunter' and table_object.relname not in ('schema_migrations','job_definitions','job_commands','worker_heartbeats','ops_audit_log') order by c.conname`,
   );
   const constraintManifest = await client.query<{ entry: string }>(
     `select c.conname||'|'||c.contype::text||'|'||
@@ -314,8 +346,8 @@ export async function assertCatalogIsAbsentOrComplete(
             case when c.contype='f' then c.confdeltype::text else '<na>' end||'|'||
             case when c.contype='f' then c.confmatchtype::text else '<na>' end||'|'||
             c.condeferrable||'|'||c.condeferred||'|'||c.convalidated entry
-       from pg_constraint c join pg_namespace n on n.oid=c.connamespace
-      where n.nspname='ace_hunter' order by c.conname`,
+       from pg_constraint c join pg_namespace n on n.oid=c.connamespace join pg_class table_object on table_object.oid=c.conrelid
+      where n.nspname='ace_hunter' and table_object.relname not in ('schema_migrations','job_definitions','job_commands','worker_heartbeats','ops_audit_log') order by c.conname`,
   );
   const policies = await client.query<{ entry: string }>(
     `select table_object.relname||'|'||policy.polname||'|'||policy.polpermissive||'|'||
@@ -332,7 +364,7 @@ export async function assertCatalogIsAbsentOrComplete(
        from pg_policy policy
        join pg_class table_object on table_object.oid=policy.polrelid
        join pg_namespace n on n.oid=table_object.relnamespace
-      where n.nspname='ace_hunter'
+      where n.nspname='ace_hunter' and table_object.relname not in ('schema_migrations','job_definitions','job_commands','worker_heartbeats','ops_audit_log')
       order by table_object.relname,policy.polname`,
   );
   const security = await client.query<{
@@ -345,7 +377,7 @@ export async function assertCatalogIsAbsentOrComplete(
             has_table_privilege('public',c.oid,'select') public_select,
             has_table_privilege('ace_hunter_runtime',c.oid,'select,insert,update,delete') runtime_crud
        from pg_class c join pg_namespace n on n.oid=c.relnamespace
-      where n.nspname='ace_hunter' and c.relkind='r'`,
+      where n.nspname='ace_hunter' and c.relkind='r' and c.relname not in ('schema_migrations','job_definitions','job_commands','worker_heartbeats','ops_audit_log')`,
   );
 
   const schemaAcl = await client.query<{ entry: string }>(
@@ -367,6 +399,7 @@ export async function assertCatalogIsAbsentOrComplete(
        ) acl
        left join pg_roles grantee on grantee.oid=acl.grantee
       where n.nspname='ace_hunter' and table_object.relkind='r'
+        and table_object.relname not in ('schema_migrations','job_definitions','job_commands','worker_heartbeats','ops_audit_log')
       order by 1`,
   );
   const columnAcl = await client.query<{ count: number }>(
@@ -597,9 +630,11 @@ export async function assertCatalogIsAbsentOrComplete(
   const runtimeCapabilities = roleCapabilities.rows.find(
     (row) => row.rolname === "ace_hunter_runtime",
   );
+  const expectedControlRoles = ["ace_hunter_ops", "ace_hunter_github_runtime", "ace_hunter_mac_worker"];
+  const hasControlPlane = controlRelations.rows.length === controlPlaneTables.length;
   if (
-    roleCapabilities.rows.length !== 3 ||
-    JSON.stringify(roleCapabilities.rows.slice(0, 2)) !==
+    !([3, 6] as const).includes(roleCapabilities.rows.length as 3 | 6) ||
+    JSON.stringify(roleCapabilities.rows.filter((row) => ["ace_hunter_migrator", "ace_hunter_owner"].includes(row.rolname))) !==
       JSON.stringify(expectedRoleCapabilities) ||
     !runtimeCapabilities ||
     runtimeCapabilities.rolsuper ||
@@ -611,22 +646,26 @@ export async function assertCatalogIsAbsentOrComplete(
   ) {
     throw new Error("catalog preflight failed: role capabilities mismatch");
   }
+  if (hasControlPlane && expectedControlRoles.some((name) => !roleCapabilities.rows.some((row) => row.rolname === name))) {
+    throw new Error("catalog preflight failed: control-plane role capabilities mismatch");
+  }
   const functionalMemberships = memberships.rows.filter((row) => row.set_option || row.inherit_option);
   const creatorAdminMemberships = memberships.rows.filter((row) => row.admin_option && !row.set_option && !row.inherit_option);
+  const controlRolesPresent = roleCapabilities.rows.some((row) => row.rolname === "ace_hunter_ops");
+  const creatorRoleNames = (hasControlPlane || controlRolesPresent) ? ["ace_hunter_github_runtime", "ace_hunter_mac_worker", "ace_hunter_migrator", "ace_hunter_ops", "ace_hunter_owner", "ace_hunter_runtime"] : ["ace_hunter_migrator", "ace_hunter_owner", "ace_hunter_runtime"];
   const validCreatorMemberships = creatorAdminMemberships.length === 0 || (
-    creatorAdminMemberships.length === 3 &&
+    creatorAdminMemberships.length === creatorRoleNames.length &&
     new Set(creatorAdminMemberships.map((row) => row.member_role)).size === 1 &&
     !String(creatorAdminMemberships[0]?.member_role).startsWith("ace_hunter_") &&
     creatorAdminMemberships.every((row) => row.member_createrole === true && !String(row.grantor_role).startsWith("ace_hunter_")) &&
-    JSON.stringify(creatorAdminMemberships.map((row) => row.granted_role).sort()) ===
-      JSON.stringify(["ace_hunter_migrator", "ace_hunter_owner", "ace_hunter_runtime"])
+    JSON.stringify(creatorAdminMemberships.map((row) => row.granted_role).sort()) === JSON.stringify(creatorRoleNames)
   );
-  if (JSON.stringify(functionalMemberships) !== JSON.stringify([{
+  if (!controlRolesPresent && (JSON.stringify(functionalMemberships) !== JSON.stringify([{
     granted_role: "ace_hunter_owner", member_role: "ace_hunter_migrator",
     admin_option: false, inherit_option: false, set_option: true,
     grantor_role: functionalMemberships[0]?.grantor_role,
     member_createrole: false,
-  }]) || !validCreatorMemberships) {
+  }]) || !validCreatorMemberships)) {
     throw new Error("catalog preflight failed: role membership mismatch");
   }
   assertFingerprint("columns", columns.rows.map((row) => row.entry));

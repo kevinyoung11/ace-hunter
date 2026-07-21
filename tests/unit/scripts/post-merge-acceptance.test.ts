@@ -9,6 +9,15 @@ it("waits for the three distinct successful launchd parent stages", async () => 
   expect(continuation).toContain('r.rows[0].n===3');
 });
 
+it("keeps X unavailable as an explicit opt-in downgrade", async () => {
+  const install = await readFile("ops/launchd/install.sh", "utf8");
+  const continuation = await readFile("scripts/continue-post-merge-release.sh", "utf8");
+  expect(install).toContain("x_preflight_required");
+  expect(install).toContain("--allow-x-unavailable");
+  expect(continuation).toContain("x_durable_acceptance_required");
+  expect(continuation).toContain("ALLOW_X_UNAVAILABLE");
+});
+
 it("keeps the owner release transaction active across continuation until the parent commits", async () => {
   const parent = await readFile("scripts/run-post-merge-release.sh", "utf8");
   const continuation = await readFile("scripts/continue-post-merge-release.sh", "utf8");

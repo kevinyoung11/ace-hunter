@@ -25,6 +25,7 @@ export interface JobInput {
   parameters: Record<string, unknown>;
   parentRunId?: string;
   dataCutoffAt?: Date;
+  commandId?: string;
 }
 
 export interface JobContext {
@@ -321,7 +322,7 @@ function validateInput(input: JobInput, loadedSecrets: readonly string[]): Valid
     requireDate(input.scheduledFor);
     if (input.dataCutoffAt) requireDate(input.dataCutoffAt);
     if (input.parentRunId && !uuid.test(input.parentRunId)) throw new Error("parent run id");
-    const parametersJson = canonicalJobParameters(input.parameters, {}, {
+    const parametersJson = canonicalJobParameters(input.commandId ? { ...input.parameters, command_id: input.commandId } : input.parameters, {}, {
       validateString: (value, kind) => validateParameterString(value, kind, loadedSecrets),
     });
     return {
