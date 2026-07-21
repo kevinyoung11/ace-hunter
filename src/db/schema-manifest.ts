@@ -651,13 +651,14 @@ export async function assertCatalogIsAbsentOrComplete(
   }
   const functionalMemberships = memberships.rows.filter((row) => row.set_option || row.inherit_option);
   const creatorAdminMemberships = memberships.rows.filter((row) => row.admin_option && !row.set_option && !row.inherit_option);
+  const controlRolesPresent = roleCapabilities.rows.some((row) => row.rolname === "ace_hunter_ops");
+  const creatorRoleNames = (hasControlPlane || controlRolesPresent) ? ["ace_hunter_github_runtime", "ace_hunter_mac_worker", "ace_hunter_migrator", "ace_hunter_ops", "ace_hunter_owner", "ace_hunter_runtime"] : ["ace_hunter_migrator", "ace_hunter_owner", "ace_hunter_runtime"];
   const validCreatorMemberships = creatorAdminMemberships.length === 0 || (
-    creatorAdminMemberships.length === 3 &&
+    creatorAdminMemberships.length === creatorRoleNames.length &&
     new Set(creatorAdminMemberships.map((row) => row.member_role)).size === 1 &&
     !String(creatorAdminMemberships[0]?.member_role).startsWith("ace_hunter_") &&
     creatorAdminMemberships.every((row) => row.member_createrole === true && !String(row.grantor_role).startsWith("ace_hunter_")) &&
-    JSON.stringify(creatorAdminMemberships.map((row) => row.granted_role).sort()) ===
-      JSON.stringify(["ace_hunter_migrator", "ace_hunter_owner", "ace_hunter_runtime"])
+    JSON.stringify(creatorAdminMemberships.map((row) => row.granted_role).sort()) === JSON.stringify(creatorRoleNames)
   );
   if (JSON.stringify(functionalMemberships) !== JSON.stringify([{
     granted_role: "ace_hunter_owner", member_role: "ace_hunter_migrator",
